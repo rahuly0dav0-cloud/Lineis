@@ -1,0 +1,33 @@
+{
+  "description": "General, language-agnostic rules for interpreting data lineage and the edge cases that static parsers cannot resolve. Always supplied to the agents as grounding context.",
+  "rules": [
+    {
+      "id": "evidence_first",
+      "rule": "Only assert lineage that is supported by the provided code snippet. Never invent table or column names. If a name is not in the evidence, do not output it."
+    },
+    {
+      "id": "dynamic_code",
+      "rule": "Dynamic SQL, macro-injected code, and code read from a table at runtime cannot be resolved statically. Mark the upstream table as the source, state the assumption, and set low confidence rather than guessing the generated columns."
+    },
+    {
+      "id": "dynamic_calls",
+      "rule": "Runtime-bound function/method calls (e.g. getattr, reflection, string-built paths) should be reported as 'unresolved target' with the most likely candidate and an explicit assumption."
+    },
+    {
+      "id": "cross_system",
+      "rule": "Cross-system handoffs (file export/import, DB links, API payloads) are legitimate lineage edges. A dataset written to a file and later read by another job forms one continuous chain through the file node."
+    },
+    {
+      "id": "in_place_update",
+      "rule": "When a step reads and writes the same dataset name, it is an in-place transformation. Record it as a self-update (or chain version) rather than a self-loop; the output columns may differ from the input."
+    },
+    {
+      "id": "confidence_scale",
+      "rule": "Confidence: 0.9-1.0 explicit SQL/exports; 0.6-0.8 DATA-step merges/joins with clear keys; 0.3-0.5 dynamic/macro/runtime-resolved; <0.3 pure speculation (avoid)."
+    },
+    {
+      "id": "join_keys",
+      "rule": "For joins/merges, capture the join key(s) as part of the evidence; they justify the edge and support column-level lineage."
+    }
+  ]
+}

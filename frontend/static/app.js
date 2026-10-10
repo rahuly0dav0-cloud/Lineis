@@ -249,7 +249,7 @@ function renderReview(data) {
       <div class="agent-top">
         <div>
           <div class="sec-title" style="margin-top:0">AI lineage review</div>
-          <p class="muted empty" style="margin:2px 0 0">Route the ${unresolved} medium/low-confidence mapping(s) to the agent for proposed lineage with assumptions and confidence.</p>
+          <p class="muted empty" style="margin:2px 0 0">Two agents: a <b>discovery</b> agent proposes lineage for the ${unresolved} medium/low-confidence &amp; dynamic cases (SAS macros, SELECT INTO), then a <b>validation</b> agent independently checks each proposal against the code evidence and knowledge base.</p>
         </div>
         <button class="btn primary sm" id="agentBtn"${agentEnabled ? "" : " disabled"}>✦ Ask AI to review</button>
       </div>
@@ -610,26 +610,56 @@ function renderAgentResult(data) {
     host.innerHTML = `<div class="warn-item"><span>⚠</span><span>${esc(data.error)}</span></div>`;
     return;
   }
-  const sugg = data.suggestions || [];
-  if (!sugg.length) {
-    host.innerHTML = `<p class="muted empty">${esc(data.message || "No suggestions returned.")}</p>`;
+  const proposals = data.proposals || [];
+  if (!proposals.length) {
+    host.innerHTML = `<p class="muted empty">${esc(data.message || "No proposals returned.")}</p>`;
     return;
   }
-  host.innerHTML = `<div class="agent-note">Reviewed ${data.reviewed ?? sugg.length} operation(s) with ${esc(data.model || "the model")}. Proposals are AI-generated — verify before accepting.</div>` +
-    sugg.map((s) => {
-      const conf = Math.round((s.confidence ?? 0) * 100);
-      const cc = conf >= 75 ? "var(--sink)" : conf >= 50 ? "var(--sas)" : "var(--accent)";
-      const asum = (s.assumptions || []).map((a) => `<li>${esc(a)}</li>`).join("");
-      return `<div class="agent-card">
-        <div class="agent-head">
-          <span class="agent-op">${esc(s.op_id || "op")}</span>
-          <span class="agent-conf" style="color:${cc}">${conf}% confident</span>
-        </div>
-        <div class="agent-flow">${(s.proposed_inputs || []).map(esc).join(", ") || "—"} <span class="arw">→</span> <b>${esc(s.proposed_target || "?")}</b></div>
-        ${s.rationale ? `<div class="agent-rat">${esc(s.rationale)}</div>` : ""}
-        ${asum ? `<div class="agent-asum"><span>Assumptions</span><ul>${asum}</ul></div>` : ""}
+  const vmap = {};
+  (data.validations || []).forEach((v) => { vmap[v.op_id] = v; });
+  const globalV = vmap["*"];
+
+  const ku = data.context_used || {};
+  const kbline = `KB grounding: ${ku.rules || 0} rules · ${ku.sas_idioms || 0} SAS idioms` +
+    (ku.glossary && ku.glossary.length ? ` · glossary [${ku.glossary.map(esc).join(", ")}]` : "");
+  let html = `<div class="agent-note">
+    <b>Stage 1 Discovery</b> → <b>Stage 2 Validation</b> · reviewed ${data.reviewed ?? proposals.length} op(s) with ${esc(data.model || "the model")}.<br>
+    ${esc(kbline)}<br>Proposals are AI-generated and independently validated — confirm before accepting.</div>`;
+  if (globalV) {
+    html += `<div class="warn-item"><span>⚠</span><span>Validation stage: ${esc((globalV.issues || []).join("; ") || globalV.comment || "unavailable")}</span></div>`;
+  }
+
+  html += proposals.map((s) => {
+    const conf = Math.round((s.confidence ?? 0) * 100);
+    const cc = conf >= 75 ? "var(--sink)" : conf >= 50 ? "var(--sas)" : "var(--accent)";
+    const asum = (s.assumptions || []).map((a) => `<li>${esc(a)}</li>`).join("");
+    const cols = (s.columns || []).length ? `<div class="agent-cols">columns: ${(s.columns || []).map(esc).join(", ")}</div>` : "";
+    const v = vmap[s.op_id];
+    let verdict = "";
+    if (v) {
+      const vc = { confirmed: "var(--sink)", needs_review: "var(--sas)", rejected: "var(--accent)" }[v.verdict] || "var(--muted)";
+      const vlabel = { confirmed: "✓ Confirmed", needs_review: "△ Needs review", rejected: "✗ Rejected" }[v.verdict] || v.verdict;
+      const issues = (v.issues || []).map((x) => `<li>${esc(x)}</li>`).join("");
+      verdict = `<div class="agent-verdict" style="border-color:${vc}">
+        <span class="vbadge" style="color:${vc}">${esc(vlabel)}</span>
+        ${v.confidence != null ? `<span class="muted">validator ${Math.round(v.confidence * 100)}%</span>` : ""}
+        ${v.comment ? `<div class="agent-rat">${esc(v.comment)}</div>` : ""}
+        ${issues ? `<div class="agent-asum"><span>Issues</span><ul>${issues}</ul></div>` : ""}
       </div>`;
-    }).join("");
+    }
+    return `<div class="agent-card">
+      <div class="agent-head">
+        <span class="agent-op">${esc(s.op_id || "op")}</span>
+        <span class="agent-conf" style="color:${cc}">${conf}% proposed</span>
+      </div>
+      <div class="agent-flow">${(s.proposed_inputs || []).map(esc).join(", ") || "—"} <span class="arw">→</span> <b>${esc(s.proposed_target || "?")}</b></div>
+      ${cols}
+      ${s.rationale ? `<div class="agent-rat">${esc(s.rationale)}</div>` : ""}
+      ${asum ? `<div class="agent-asum"><span>Assumptions</span><ul>${asum}</ul></div>` : ""}
+      ${verdict}
+    </div>`;
+  }).join("");
+  host.innerHTML = html;
 }
 
 // ---------------------------------------------------------------------------
@@ -644,7 +674,7 @@ function initEvents() {
   ["dragleave", "drop"].forEach((ev) => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.remove("drag"); }));
   dz.addEventListener("drop", (e) => { if (e.dataTransfer.files.length) uploadFiles(e.dataTransfer.files); });
 
-  $("demoBtn").onclick = loadDemo;
+  $("demoBtn") && ($("demoBtn").onclick = loadDemo);
   $("newBtn").onclick = showHome;
 
   document.querySelectorAll(".tab").forEach((t) => t.onclick = () => switchTab(t.dataset.tab));

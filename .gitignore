@@ -31,6 +31,13 @@ uploads/
 exports/
 *.log
 
+# ---- Client / proprietary code — NEVER commit to the public repo ----
+# Drop real client SAS/SQL here for local testing; it stays off GitHub.
+/FTE_p2a.sas
+/SAS_code_Model_1/
+/private/
+/local_samples/
+
 # ---- OS / editor ----
 .DS_Store
 Thumbs.db

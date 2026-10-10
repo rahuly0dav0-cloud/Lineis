@@ -1,0 +1,22 @@
+{
+  "description": "Curated business/domain glossary. Only terms whose key appears in the parsed dataset or column names are injected into the agent prompt, keeping context focused. Extend this per client engagement.",
+  "terms": {
+    "DND_NB": "Distribution Node Number — the branch/node identifier; primary key across the branch staffing model.",
+    "FTE": "Full-Time Equivalent — the staffing quantity the model estimates and governs.",
+    "TE_TNX": "Teller transactions — volume of teller-executed transactions.",
+    "TSL": "Target Service Level — service-level target used in the staffing logit.",
+    "NCF": "Non-Customer-Facing activity time.",
+    "AB": "Actual Base / budgeted FTE baseline used as the model target.",
+    "yr_month": "Reporting period encoded as YYYYMM; the monthly grain key.",
+    "util": "Utilisation metric (sales/open/servicing) feeding the FTE estimate.",
+    "erlang": "Erlang staffing input (queueing-based teller capacity).",
+    "guide": "Guidance output — the governed FTE recommendation per node.",
+    "finrep": "FINREP — EU supervisory financial reporting framework.",
+    "corep": "COREP — EU supervisory capital/own-funds reporting framework.",
+    "rwa": "Risk-Weighted Assets.",
+    "pd": "Probability of Default (credit risk).",
+    "lgd": "Loss Given Default (credit risk).",
+    "ead": "Exposure At Default (credit risk).",
+    "ecl": "Expected Credit Loss (IFRS 9)."
+  }
+}

@@ -1,0 +1,69 @@
+{
+  "description": "Curated SAS construct semantics for lineage inference. Each idiom is only injected into the agent prompt when one of its trigger substrings appears in the parsed code or warnings, so context stays focused.",
+  "idioms": [
+    {
+      "id": "select_into_macro",
+      "triggers": ["into :", "into:", "select into", "macro variable"],
+      "pattern": "proc sql; select <col> into :mvar separated by ' ' from T; quit; ... &mvar.;",
+      "meaning": "Rows of table T are concatenated into a macro variable, then executed inline as SAS code. The executed code usually creates or transforms datasets that are NOT visible in the static script (it is data-driven code generation).",
+      "lineage_hint": "Treat T as an upstream SOURCE of the step where &mvar is executed. The concrete datasets/columns produced depend on the contents of T and cannot be resolved statically.",
+      "confidence": "low"
+    },
+    {
+      "id": "inline_macro_exec",
+      "triggers": ["&", "macro"],
+      "pattern": "data OUT; set IN; &scr_code.; run;",
+      "meaning": "A macro variable is expanded inline inside a DATA step, injecting arbitrary columns/logic at runtime (e.g. a scoring model). The OUT dataset gains columns that the static parser cannot see.",
+      "lineage_hint": "OUT depends on IN plus whatever table originally populated the macro. Flag new/derived columns as runtime-resolved.",
+      "confidence": "low"
+    },
+    {
+      "id": "merge_inner_join",
+      "triggers": ["merge", "in=", "if a and b"],
+      "pattern": "data OUT; merge A(in=a) B(in=b); by k; if a and b; run;",
+      "meaning": "DATA-step MERGE on BY variables = a join on key k. 'if a and b' keeps only matched rows (inner join); 'if a' keeps all of A (left join).",
+      "lineage_hint": "OUT depends on A and B; join key = the BY variables. Dataset options keep=/rename= change which columns flow through.",
+      "confidence": "high"
+    },
+    {
+      "id": "dataset_options",
+      "triggers": ["keep=", "drop=", "rename=", "where="],
+      "pattern": "SRC(keep=a b rename=(a=x) where=(y>0))",
+      "meaning": "Dataset options filter columns (keep/drop), alias columns (rename), or filter rows (where) as a dataset is read.",
+      "lineage_hint": "Use keep=/drop= to scope column-level lineage; rename= maps source column -> target column.",
+      "confidence": "high"
+    },
+    {
+      "id": "proc_export_file",
+      "triggers": ["proc export", "outfile", "dbms="],
+      "pattern": "proc export data=X outfile='f.xlsx' dbms=xlsx replace;",
+      "meaning": "Writes dataset X to an external file (Excel/CSV). This is a terminal OUTPUT of the pipeline.",
+      "lineage_hint": "X -> file f.xlsx (sink node).",
+      "confidence": "high"
+    },
+    {
+      "id": "set_stack",
+      "triggers": ["set "],
+      "pattern": "data OUT; set A B; run;",
+      "meaning": "SET with multiple datasets concatenates (stacks) them; a single SET copies/derives. Same name in and out (set A; ... in data A) is an in-place rebuild.",
+      "lineage_hint": "OUT depends on every dataset listed on SET.",
+      "confidence": "high"
+    },
+    {
+      "id": "generated_rows",
+      "triggers": ["_temporary_", "do ", "output;", "array "],
+      "pattern": "data OUT; array x[..] _temporary_ (..); do i=..; OUT vars=..; output; end; run;",
+      "meaning": "Rows are generated from constants/arrays with no input dataset (e.g. seeding missing keys).",
+      "lineage_hint": "OUT is a generated SOURCE (no upstream dataset). Note the constants as provenance.",
+      "confidence": "medium"
+    },
+    {
+      "id": "proc_output_out",
+      "triggers": ["proc means", "proc univariate", "proc summary", "output out="],
+      "pattern": "proc univariate data=IN; by k; var v; output out=OUT mean=m; run;",
+      "meaning": "A summary PROC aggregates IN (by key k) and writes statistics to OUT.",
+      "lineage_hint": "IN -> OUT, aggregated; group keys = BY variables.",
+      "confidence": "high"
+    }
+  ]
+}

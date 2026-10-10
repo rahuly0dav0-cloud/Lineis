@@ -299,3 +299,6 @@ pre.code { background: var(--bg); border: 1px solid var(--border); border-radius
 .agent-asum span { font-weight: 600; text-transform: uppercase; letter-spacing: .04em; font-size: 10px; }
 .agent-asum ul { margin: 4px 0 0; padding-left: 18px; }
 .agent-asum li { margin: 2px 0; }
+.agent-cols { font-size: 12px; color: var(--muted); margin-top: 6px; font-family: ui-monospace, monospace; }
+.agent-verdict { margin-top: 10px; padding: 8px 10px; border-left: 3px solid var(--muted); background: var(--bg-2); border-radius: 0 8px 8px 0; }
+.vbadge { font-size: 12px; font-weight: 700; margin-right: 8px; }
