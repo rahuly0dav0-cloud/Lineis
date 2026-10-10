@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lineis — BCBS 239 Lineage Intelligence</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/cytoscape@3.30.2/dist/cytoscape.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dagre@0.8.5/dist/dagre.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.min.js"></script>
+</head>
+<body>
+
+  <!-- ====================== HOME / LANDING ====================== -->
+  <section id="home" class="screen home">
+    <nav class="home-nav">
+      <div class="brand">
+        <span class="logo">L</span>
+        <div>
+          <strong>Lineis</strong>
+          <span class="sub">Lineage Intelligence for BCBS&nbsp;239</span>
+        </div>
+      </div>
+      <div class="home-nav-right">
+        <span class="pill">SQL</span>
+        <span class="pill">SAS</span>
+        <span class="pill">Python</span>
+      </div>
+    </nav>
+
+    <div class="hero">
+      <h1>Trace every regulatory number<br />back to its source — automatically.</h1>
+      <p class="lede">
+        Point Lineis at your SQL, SAS and Python. It parses the code, reconstructs
+        field- and table-level lineage across languages and platforms, and publishes
+        audit-ready evidence — the Layer&nbsp;1 engine behind a DataHub-centric BCBS&nbsp;239 programme.
+      </p>
+
+      <div id="dropzone" class="dropzone">
+        <input id="fileInput" type="file" multiple accept=".sql,.sas,.py" hidden />
+        <div class="dz-inner">
+          <div class="dz-icon">⇪</div>
+          <div class="dz-text">
+            <strong>Drop code files here</strong>
+            <span>or <button type="button" id="browseBtn" class="linklike">browse</button> &middot; .sql, .sas, .py</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="quick-row">
+        <button class="btn primary" id="demoBtn">▶ Load quick demo</button>
+        <span class="divider-or">or load a prepared test batch</span>
+      </div>
+
+      <div id="batchGrid" class="batch-grid"></div>
+
+      <div class="value-cards">
+        <div class="vcard">
+          <div class="vc-icon discover">◎</div>
+          <h3>Discover</h3>
+          <p>Parse source code, SQL, ETL and scripts to extract dependencies — no manual mapping.</p>
+        </div>
+        <div class="vcard">
+          <div class="vc-icon validate">✓</div>
+          <h3>Validate</h3>
+          <p>Every edge carries the file, line and code snippet that proves it. Evidence, not guesswork.</p>
+        </div>
+        <div class="vcard">
+          <div class="vc-icon govern">⚖</div>
+          <h3>Govern</h3>
+          <p>Classify Source, Intermediate and Output datasets; export OpenLineage into DataHub.</p>
+        </div>
+      </div>
+    </div>
+
+    <footer class="home-foot">
+      Prototype &middot; Layer 1 lineage engine &middot; runs locally
+    </footer>
+  </section>
+
+  <!-- ====================== WORKSPACE ====================== -->
+  <section id="workspace" class="screen workspace" hidden>
+    <header class="topbar">
+      <div class="brand small">
+        <span class="logo">L</span>
+        <strong>Lineis</strong>
+      </div>
+      <div class="topbar-center">
+        <div class="search">
+          <span class="search-ico">⌕</span>
+          <input id="search" type="text" placeholder="Search datasets…" autocomplete="off" />
+        </div>
+        <div class="filters" id="langFilters">
+          <button class="chip-toggle active" data-lang="sql"><i class="d sql"></i>SQL</button>
+          <button class="chip-toggle active" data-lang="sas"><i class="d sas"></i>SAS</button>
+          <button class="chip-toggle active" data-lang="python"><i class="d py"></i>Python</button>
+        </div>
+      </div>
+      <div class="topbar-right">
+        <button class="icon-btn" id="layoutBtn" title="Toggle layout direction">⇄</button>
+        <button class="icon-btn" id="fitBtn" title="Fit to screen">⤢</button>
+        <button class="icon-btn" id="resetHl" title="Clear highlight">⦸</button>
+        <div class="sep"></div>
+        <button class="btn ghost sm" id="exportJson">Export JSON</button>
+        <button class="btn ghost sm" id="exportOl">OpenLineage</button>
+        <button class="btn primary sm" id="newBtn">New analysis</button>
+      </div>
+    </header>
+
+    <div class="ws-body">
+      <div id="graph"></div>
+
+      <aside class="ws-panel">
+        <nav class="tabs">
+          <button class="tab active" data-tab="summary">Summary</button>
+          <button class="tab" data-tab="datasets">Datasets</button>
+          <button class="tab" data-tab="operations">Operations</button>
+          <button class="tab" data-tab="details">Details</button>
+          <button class="tab" data-tab="review">Review <span id="reviewBadge" class="badge" hidden>0</span></button>
+        </nav>
+
+        <div class="tab-body">
+          <div class="tabpane active" data-pane="summary" id="paneSummary"></div>
+          <div class="tabpane" data-pane="datasets" id="paneDatasets"></div>
+          <div class="tabpane" data-pane="operations" id="paneOperations"></div>
+          <div class="tabpane" data-pane="details" id="paneDetails">
+            <p class="muted empty">Select a dataset or transformation in the graph to inspect its lineage and evidence.</p>
+          </div>
+          <div class="tabpane" data-pane="review" id="paneReview"></div>
+        </div>
+      </aside>
+    </div>
+
+    <div class="legend">
+      <span><i class="sw root"></i> Source</span>
+      <span><i class="sw mid"></i> Intermediate</span>
+      <span><i class="sw sink"></i> Output</span>
+      <span class="legsep"></span>
+      <span><i class="ln sql"></i> SQL</span>
+      <span><i class="ln sas"></i> SAS</span>
+      <span><i class="ln py"></i> Python</span>
+      <span><i class="sw dashed"></i> Low confidence</span>
+    </div>
+  </section>
+
+  <div id="loading" class="loading" hidden><div class="spinner"></div><span>Parsing lineage…</span></div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
