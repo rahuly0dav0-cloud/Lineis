@@ -6,6 +6,10 @@
 let cy = null;
 let lastResult = null;
 let rankDir = "LR";
+let lastSource = { type: "upload", name: "Analysis" };
+let currentUser = null;
+let agentEnabled = false;
+let authMode = "login";
 const activeLangs = new Set(["sql", "sas", "python"]);
 
 const LANG_COLOR = { sql: "#3b82f6", sas: "#f59e0b", python: "#22c55e", "": "#8a97a8" };
@@ -44,11 +48,17 @@ async function postForm(url, form) {
 function uploadFiles(files) {
   const fd = new FormData();
   for (const f of files) fd.append("files", f);
+  const names = Array.from(files).map((f) => f.name);
+  lastSource = { type: "upload", name: names.length === 1 ? names[0] : `Upload · ${names.length} files` };
   postForm("/api/parse", fd);
 }
-function loadDemo() { postForm("/api/parse-samples", new FormData()); }
+function loadDemo() {
+  lastSource = { type: "samples", name: "Quick demo" };
+  postForm("/api/parse-samples", new FormData());
+}
 function loadBatch(id) {
   const fd = new FormData(); fd.append("name", id);
+  lastSource = { type: "batch", name: id.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) };
   postForm("/api/parse-batch", fd);
 }
 
@@ -121,6 +131,7 @@ function render(data) {
 // ---------------------------------------------------------------------------
 function renderSummary(data) {
   const s = data.stats || {};
+  const c = confidenceStats(data);
   const cells = [
     ["datasets", "Datasets"], ["operations", "Transformations"],
     ["foundation", "Source datasets"], ["outputs", "Final outputs"],
@@ -139,17 +150,36 @@ function renderSummary(data) {
     </div>
     <div class="sec-title">Transformations by language</div>
     ${langBars || '<p class="muted empty">No transformations detected.</p>'}
-    <div class="sec-title">Lineage integrity</div>
+    <div class="sec-title">Lineage confidence</div>
     <div class="bar-row"><span class="lab">Evidence</span>
-      <span class="bar-track"><span class="bar-fill" style="width:${pctHigh(data)}%;background:var(--sink)"></span></span>
-      <span class="val">${pctHigh(data)}%</span></div>
-    <p class="muted empty" style="margin-top:10px">${s.low_confidence || 0} mapping(s) flagged for human review. Every edge is backed by a file, line and code snippet.</p>`;
+      <span class="bar-track"><span class="bar-fill" style="width:${c.coverage}%;background:var(--sink)"></span></span>
+      <span class="val">${c.coverage}%</span></div>
+    <div class="bar-row"><span class="lab">Confidence</span>
+      <span class="bar-track"><span class="bar-fill" style="width:${c.score}%;background:${c.score >= 75 ? 'var(--sink)' : c.score >= 50 ? 'var(--sas)' : 'var(--accent)'}"></span></span>
+      <span class="val">${c.score}%</span></div>
+    <div class="conf-break">
+      <span><b style="color:var(--sink)">${c.high}</b> high</span>
+      <span><b style="color:var(--sas)">${c.medium}</b> medium</span>
+      <span><b style="color:var(--accent)">${c.low}</b> low</span>
+    </div>
+    <p class="muted empty" style="margin-top:10px"><b>Evidence</b> = share of transformations backed by a file, line and code snippet. <b>Confidence</b> is a weighted score of how reliably each mapping was resolved (SQL parses highest; SAS/Python macros and dynamic code score lower and are candidates for the AI review step).</p>`;
 }
-function pctHigh(data) {
+function confidenceStats(data) {
   const ops = data.operations || [];
-  if (!ops.length) return 100;
-  const high = ops.filter((o) => o.confidence === "high").length;
-  return Math.round((high / ops.length) * 100);
+  if (!ops.length) return { coverage: 100, score: 100, high: 0, medium: 0, low: 0 };
+  const weight = { high: 1, medium: 0.7, low: 0.4 };
+  let high = 0, medium = 0, low = 0, withEvidence = 0, weighted = 0;
+  for (const o of ops) {
+    const c = o.confidence || "medium";
+    if (c === "high") high++; else if (c === "low") low++; else medium++;
+    weighted += weight[c] ?? 0.7;
+    if (o.snippet && o.file) withEvidence++;
+  }
+  return {
+    coverage: Math.round((withEvidence / ops.length) * 100),
+    score: Math.round((weighted / ops.length) * 100),
+    high, medium, low,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -209,9 +239,25 @@ function renderReview(data) {
   const badge = $("reviewBadge");
   if (warns.length) { badge.hidden = false; badge.textContent = warns.length; }
   else badge.hidden = true;
-  $("paneReview").innerHTML = warns.length
+  const c = confidenceStats(data);
+  const unresolved = c.low + c.medium;
+  const warnHtml = warns.length
     ? warns.map((w) => `<div class="warn-item"><span>⚠</span><span>${esc(w)}</span></div>`).join("")
     : `<div class="ok-state"><div class="big">✓</div><p>No gaps or low-confidence mappings.<br/>All lineage is backed by code evidence.</p></div>`;
+  const agentSection = `
+    <div class="agent-block">
+      <div class="agent-top">
+        <div>
+          <div class="sec-title" style="margin-top:0">AI lineage review</div>
+          <p class="muted empty" style="margin:2px 0 0">Route the ${unresolved} medium/low-confidence mapping(s) to the agent for proposed lineage with assumptions and confidence.</p>
+        </div>
+        <button class="btn primary sm" id="agentBtn"${agentEnabled ? "" : " disabled"}>✦ Ask AI to review</button>
+      </div>
+      ${agentEnabled ? "" : `<div class="agent-hint">Set <code>GROQ_API_KEY</code> on the server to enable the AI review agent.</div>`}
+      <div id="agentResult" class="agent-result"></div>
+    </div>`;
+  $("paneReview").innerHTML = warnHtml + agentSection;
+  if ($("agentBtn")) $("agentBtn").onclick = runAgentReview;
 }
 
 // ---------------------------------------------------------------------------
@@ -375,6 +421,218 @@ function download(name, content) {
 function esc(s) { return String(s == null ? "" : s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c])); }
 
 // ---------------------------------------------------------------------------
+// Authentication
+// ---------------------------------------------------------------------------
+async function checkAuth() {
+  try {
+    const res = await fetch("/api/auth/me");
+    const data = await res.json();
+    currentUser = data.user;
+    agentEnabled = !!data.agent;
+  } catch (e) { currentUser = null; }
+  updateAcctUI();
+  if (currentUser) loadHistory(); else { $("historySection").hidden = true; }
+}
+
+function updateAcctUI() {
+  const area = $("acctArea");
+  if (currentUser) {
+    area.innerHTML = `
+      <span class="acct-email" title="${esc(currentUser.email)}">${esc(currentUser.email)}</span>
+      <button class="btn ghost sm" id="signOutBtn">Sign out</button>`;
+    $("signOutBtn").onclick = signOut;
+  } else {
+    area.innerHTML = `<button class="btn ghost sm" id="signInBtn">Sign in</button>`;
+    $("signInBtn").onclick = () => openAuth("login");
+  }
+}
+
+function openAuth(mode) {
+  authMode = mode;
+  $("authError").hidden = true;
+  $("authForm").reset();
+  applyAuthMode();
+  $("authModal").hidden = false;
+  $("authEmail").focus();
+}
+function closeAuth() { $("authModal").hidden = true; }
+function applyAuthMode() {
+  const login = authMode === "login";
+  $("authTitle").textContent = login ? "Sign in to Lineis" : "Create your account";
+  $("authSub").textContent = login
+    ? "Save your analyses and revisit them any time."
+    : "Your analyses are stored locally on this machine.";
+  $("authSubmit").textContent = login ? "Sign in" : "Create account";
+  $("authSwitchText").textContent = login ? "New here?" : "Already have an account?";
+  $("authToggle").textContent = login ? "Create an account" : "Sign in";
+  $("authPassword").setAttribute("autocomplete", login ? "current-password" : "new-password");
+}
+
+async function submitAuth(e) {
+  e.preventDefault();
+  const email = $("authEmail").value.trim();
+  const password = $("authPassword").value;
+  const url = authMode === "login" ? "/api/auth/login" : "/api/auth/register";
+  try {
+    const res = await fetch(url, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      const err = $("authError");
+      err.textContent = data.error || "Something went wrong."; err.hidden = false;
+      return;
+    }
+    closeAuth();
+    await checkAuth();
+  } catch (e) {
+    const err = $("authError");
+    err.textContent = "Network error. Is the server running?"; err.hidden = false;
+  }
+}
+
+async function signOut() {
+  await fetch("/api/auth/logout", { method: "POST" });
+  currentUser = null;
+  updateAcctUI();
+  $("historySection").hidden = true;
+}
+
+// ---------------------------------------------------------------------------
+// History
+// ---------------------------------------------------------------------------
+async function loadHistory() {
+  if (!currentUser) return;
+  try {
+    const res = await fetch("/api/history");
+    if (!res.ok) return;
+    const { analyses } = await res.json();
+    renderHistory(analyses);
+  } catch (e) { /* ignore */ }
+}
+
+function renderHistory(analyses) {
+  const sec = $("historySection");
+  const list = $("historyList");
+  $("historyCount").textContent = analyses.length ? `${analyses.length} saved` : "";
+  sec.hidden = false;
+  if (!analyses.length) {
+    list.innerHTML = `<p class="muted empty">No saved analyses yet. Parse some code and hit ★ Save.</p>`;
+    return;
+  }
+  list.innerHTML = analyses.map((a) => {
+    const s = a.stats || {};
+    const when = new Date(a.created_at).toLocaleString();
+    return `<div class="hist-item" data-id="${a.id}">
+      <div class="hist-main">
+        <div class="hist-name">${esc(a.name)}</div>
+        <div class="hist-meta">${esc(a.source_type)} · ${s.datasets ?? 0} datasets · ${s.operations ?? 0} transforms · ${when}</div>
+      </div>
+      <button class="hist-del" data-del="${a.id}" title="Delete">🗑</button>
+    </div>`;
+  }).join("");
+  list.querySelectorAll(".hist-item").forEach((el) => {
+    el.querySelector(".hist-main").onclick = () => openSaved(el.dataset.id);
+  });
+  list.querySelectorAll(".hist-del").forEach((b) => {
+    b.onclick = (e) => { e.stopPropagation(); deleteSaved(b.dataset.del); };
+  });
+}
+
+async function openSaved(id) {
+  showLoading(true);
+  try {
+    const res = await fetch(`/api/history/${id}`);
+    if (!res.ok) throw new Error("not found");
+    const data = await res.json();
+    showWorkspace();
+    render(data);
+  } catch (e) { alert("Could not load analysis."); }
+  finally { showLoading(false); }
+}
+
+async function deleteSaved(id) {
+  if (!confirm("Delete this saved analysis?")) return;
+  await fetch(`/api/history/${id}`, { method: "DELETE" });
+  loadHistory();
+}
+
+async function saveCurrent() {
+  if (!lastResult) return;
+  if (!currentUser) { openAuth("login"); return; }
+  const name = prompt("Name this analysis:", lastSource.name || "Analysis");
+  if (name === null) return;
+  const btn = $("saveBtn");
+  const prev = btn.textContent; btn.textContent = "Saving…"; btn.disabled = true;
+  try {
+    const res = await fetch("/api/history", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: name.trim() || lastSource.name, source_type: lastSource.type, result: lastResult }),
+    });
+    if (!res.ok) throw new Error("save failed");
+    btn.textContent = "✓ Saved";
+    loadHistory();
+    setTimeout(() => { btn.textContent = prev; btn.disabled = false; }, 1400);
+  } catch (e) {
+    btn.textContent = prev; btn.disabled = false;
+    alert("Could not save analysis.");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// AI review agent
+// ---------------------------------------------------------------------------
+async function runAgentReview() {
+  if (!lastResult) return;
+  const host = $("agentResult");
+  if (host) host.innerHTML = `<div class="agent-loading"><div class="spinner sm"></div> Reviewing low-confidence mappings…</div>`;
+  const btn = $("agentBtn");
+  if (btn) btn.disabled = true;
+  try {
+    const res = await fetch("/api/agent/review", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ result: lastResult }),
+    });
+    const data = await res.json();
+    renderAgentResult(data);
+  } catch (e) {
+    if (host) host.innerHTML = `<div class="warn-item"><span>⚠</span><span>Agent request failed.</span></div>`;
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+function renderAgentResult(data) {
+  const host = $("agentResult");
+  if (!host) return;
+  if (data.error) {
+    host.innerHTML = `<div class="warn-item"><span>⚠</span><span>${esc(data.error)}</span></div>`;
+    return;
+  }
+  const sugg = data.suggestions || [];
+  if (!sugg.length) {
+    host.innerHTML = `<p class="muted empty">${esc(data.message || "No suggestions returned.")}</p>`;
+    return;
+  }
+  host.innerHTML = `<div class="agent-note">Reviewed ${data.reviewed ?? sugg.length} operation(s) with ${esc(data.model || "the model")}. Proposals are AI-generated — verify before accepting.</div>` +
+    sugg.map((s) => {
+      const conf = Math.round((s.confidence ?? 0) * 100);
+      const cc = conf >= 75 ? "var(--sink)" : conf >= 50 ? "var(--sas)" : "var(--accent)";
+      const asum = (s.assumptions || []).map((a) => `<li>${esc(a)}</li>`).join("");
+      return `<div class="agent-card">
+        <div class="agent-head">
+          <span class="agent-op">${esc(s.op_id || "op")}</span>
+          <span class="agent-conf" style="color:${cc}">${conf}% confident</span>
+        </div>
+        <div class="agent-flow">${(s.proposed_inputs || []).map(esc).join(", ") || "—"} <span class="arw">→</span> <b>${esc(s.proposed_target || "?")}</b></div>
+        ${s.rationale ? `<div class="agent-rat">${esc(s.rationale)}</div>` : ""}
+        ${asum ? `<div class="agent-asum"><span>Assumptions</span><ul>${asum}</ul></div>` : ""}
+      </div>`;
+    }).join("");
+}
+
+// ---------------------------------------------------------------------------
 // Wiring
 // ---------------------------------------------------------------------------
 function initEvents() {
@@ -406,7 +664,17 @@ function initEvents() {
   $("resetHl").onclick = clearHighlight;
   $("exportJson").onclick = () => lastResult && download("lineage.json", JSON.stringify(lastResult, null, 2));
   $("exportOl").onclick = () => lastResult && download("openlineage.json", JSON.stringify(lastResult.openlineage, null, 2));
+  $("saveBtn").onclick = saveCurrent;
+
+  // Auth
+  $("signInBtn").onclick = () => openAuth("login");
+  $("authClose").onclick = closeAuth;
+  $("authToggle").onclick = () => { authMode = authMode === "login" ? "register" : "login"; $("authError").hidden = true; applyAuthMode(); };
+  $("authForm").onsubmit = submitAuth;
+  $("authModal").addEventListener("click", (e) => { if (e.target.id === "authModal") closeAuth(); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("authModal").hidden) closeAuth(); });
 }
 
 initEvents();
 loadBatchCards();
+checkAuth();

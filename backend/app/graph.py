@@ -122,7 +122,7 @@ def to_openlineage(result: ParseResult) -> list[dict]:
             }
         events.append({
             "eventType": "COMPLETE",
-            "job": {"namespace": "bcbs239-lineage", "name": op.id},
+            "job": {"namespace": "lineis-lineage", "name": op.id},
             "inputs": [_ds(i) for i in op.inputs],
             "outputs": [_ds(op.target)],
             "facets": {

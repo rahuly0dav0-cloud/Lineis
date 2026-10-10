@@ -1,8 +1,8 @@
-# Lineis — BCBS 239 Data Lineage Engine (Layer 1)
+# Lineis — Data Lineage Engine (Layer 1)
 
 Parses **SQL, SAS and Python** source code and reconstructs end-to-end data
-lineage — tracing every regulatory number back to its foundation datasets.
-Built as the Layer 1 engine for a DataHub-centric BCBS 239 programme.
+lineage — tracing every reported number back to its foundation datasets.
+Built as the Layer 1 engine for a DataHub-centric lineage programme.
 
 ## Features
 - Multi-language parsing (sqlglot for SQL, regex for SAS, `ast` for Python).

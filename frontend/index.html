@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Lineis — BCBS 239 Lineage Intelligence</title>
+  <title>Lineis — Data Lineage Intelligence</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/static/style.css" />
@@ -20,13 +20,17 @@
         <span class="logo">L</span>
         <div>
           <strong>Lineis</strong>
-          <span class="sub">Lineage Intelligence for BCBS&nbsp;239</span>
+          <span class="sub">Data Lineage Intelligence</span>
         </div>
       </div>
       <div class="home-nav-right">
         <span class="pill">SQL</span>
         <span class="pill">SAS</span>
         <span class="pill">Python</span>
+        <div class="sep-v"></div>
+        <div id="acctArea" class="acct-area">
+          <button class="btn ghost sm" id="signInBtn">Sign in</button>
+        </div>
       </div>
     </nav>
 
@@ -35,7 +39,7 @@
       <p class="lede">
         Point Lineis at your SQL, SAS and Python. It parses the code, reconstructs
         field- and table-level lineage across languages and platforms, and publishes
-        audit-ready evidence — the Layer&nbsp;1 engine behind a DataHub-centric BCBS&nbsp;239 programme.
+        audit-ready evidence — the Layer&nbsp;1 engine for a DataHub-centric lineage programme.
       </p>
 
       <div id="dropzone" class="dropzone">
@@ -55,6 +59,14 @@
       </div>
 
       <div id="batchGrid" class="batch-grid"></div>
+
+      <section id="historySection" class="history-section" hidden>
+        <div class="history-head">
+          <h2>Your saved analyses</h2>
+          <span class="muted" id="historyCount"></span>
+        </div>
+        <div id="historyList" class="history-list"></div>
+      </section>
 
       <div class="value-cards">
         <div class="vcard">
@@ -105,6 +117,7 @@
         <div class="sep"></div>
         <button class="btn ghost sm" id="exportJson">Export JSON</button>
         <button class="btn ghost sm" id="exportOl">OpenLineage</button>
+        <button class="btn ghost sm" id="saveBtn">★ Save</button>
         <button class="btn primary sm" id="newBtn">New analysis</button>
       </div>
     </header>
@@ -146,6 +159,29 @@
   </section>
 
   <div id="loading" class="loading" hidden><div class="spinner"></div><span>Parsing lineage…</span></div>
+
+  <!-- ====================== AUTH MODAL ====================== -->
+  <div id="authModal" class="modal-overlay" hidden>
+    <div class="modal-card">
+      <button class="modal-close" id="authClose" title="Close">×</button>
+      <h2 id="authTitle">Sign in to Lineis</h2>
+      <p class="muted" id="authSub">Save your analyses and revisit them any time.</p>
+      <form id="authForm" class="auth-form">
+        <label>Email
+          <input type="email" id="authEmail" autocomplete="email" required />
+        </label>
+        <label>Password
+          <input type="password" id="authPassword" autocomplete="current-password" minlength="6" required />
+        </label>
+        <div id="authError" class="auth-error" hidden></div>
+        <button type="submit" class="btn primary" id="authSubmit">Sign in</button>
+      </form>
+      <div class="auth-switch">
+        <span id="authSwitchText">New here?</span>
+        <button type="button" class="linklike" id="authToggle">Create an account</button>
+      </div>
+    </div>
+  </div>
 
   <script src="/static/app.js"></script>
 </body>

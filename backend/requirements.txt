@@ -3,3 +3,4 @@ uvicorn[standard]==0.30.6
 python-multipart==0.0.9
 sqlglot==25.24.0
 networkx==3.3
+itsdangerous==2.2.0
