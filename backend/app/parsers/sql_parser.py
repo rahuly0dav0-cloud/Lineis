@@ -15,8 +15,9 @@ import logging
 
 import sqlglot
 from sqlglot import exp
+from sqlglot.lineage import lineage as _column_lineage
 
-from ..models import Dataset, Operation, ParseResult
+from ..models import ColumnEdge, Dataset, Operation, ParseResult
 from .naming import make_dataset, split_name
 
 logging.getLogger("sqlglot").setLevel(logging.ERROR)
@@ -65,6 +66,42 @@ def _output_columns(select_scope: exp.Expression | None) -> list[str]:
             if name:
                 cols.append(name)
     return cols
+
+
+def _column_map(select_scope: exp.Expression | None, output_cols: list[str],
+                source_ids: list[str], read: str | None) -> list[ColumnEdge]:
+    """Best-effort column provenance via sqlglot's lineage tracer. Precision
+    first: a column edge is emitted only when a leaf resolves to a physical
+    source table we already recognised for this operation. Columns that cannot
+    be traced (SELECT *, schema-ambiguous references) are silently skipped
+    rather than guessed."""
+    if not isinstance(select_scope, exp.Expression) or not output_cols:
+        return []
+    src_set = set(source_ids)
+    edges: list[ColumnEdge] = []
+    for col in output_cols:
+        if not col or col == "*":
+            continue
+        try:
+            root = _column_lineage(col, select_scope.copy(), dialect=read or None)
+        except Exception:
+            continue
+        srcs: set[str] = set()
+        for node in root.walk():
+            if node is root or node.downstream:
+                continue
+            table = node.source
+            if not isinstance(table, exp.Table):
+                continue
+            tid, _, _ = split_name(_table_ref(table))
+            if tid not in src_set:
+                continue
+            colname = node.name.rpartition(".")[2] or node.name
+            srcs.add(f"{tid}.{colname}")
+        if srcs:
+            edges.append(ColumnEdge(target_column=col,
+                                    source_columns=sorted(srcs)))
+    return edges
 
 
 def _register(datasets: dict[str, Dataset], raw: str, filename: str,
@@ -227,12 +264,14 @@ def parse(code: str, filename: str = "<sql>", dialect: str = "") -> ParseResult:
                 continue
             source_ids.append(_register(result.datasets, src, filename))
 
+        output_cols = _output_columns(select_scope)
         op = Operation(
             id=f"{filename}:sql:{idx}",
             kind=kind,
             target=target_id,
             inputs=source_ids,
-            columns=_output_columns(select_scope),
+            columns=output_cols,
+            column_map=_column_map(select_scope, output_cols, source_ids, read),
             file=filename,
             language="sql",
             line_start=stmt.meta.get("line", 0) if stmt.meta else 0,
