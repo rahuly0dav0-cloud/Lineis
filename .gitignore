@@ -34,9 +34,12 @@ exports/
 # ---- Client / proprietary code — NEVER commit to the public repo ----
 # Drop real client SAS/SQL here for local testing; it stays off GitHub.
 /FTE_p2a.sas
+/p2b.sas
 /SAS_code_Model_1/
 /private/
 /local_samples/
+# Client-derived QC fixtures reference client table names — keep off GitHub.
+/backend/qc/fixtures/client_*.json
 
 # ---- OS / editor ----
 .DS_Store

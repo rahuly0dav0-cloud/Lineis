@@ -10,10 +10,12 @@ let lastSource = { type: "upload", name: "Analysis" };
 let currentUser = null;
 let agentEnabled = false;
 let authMode = "login";
+let lastProposals = [];
 const activeLangs = new Set(["sql", "sas", "python"]);
 
 const LANG_COLOR = { sql: "#3b82f6", sas: "#f59e0b", python: "#22c55e", "": "#8a97a8" };
-const ROLE_COLOR = { root: "#3b82f6", sink: "#22c55e", mid: "#a855f7" };
+const ROLE_COLOR = { root: "#3b82f6", sink: "#22c55e", mid: "#a855f7", runtime: "#64748b" };
+const LINEAGE_VIEWS = { summary: "Summary", datasets: "Datasets", operations: "Operations", details: "Details", review: "Review" };
 const $ = (id) => document.getElementById(id);
 
 // ---------------------------------------------------------------------------
@@ -91,8 +93,10 @@ function cyStyle() {
         "label": "data(label)", "color": "#cdd7e4", "font-size": 11, "font-weight": 500,
         "text-valign": "bottom", "text-margin-y": 6, "text-wrap": "ellipsis", "text-max-width": 130,
         "width": 24, "height": 24, "border-width": 2, "border-color": "#0b0e13",
-        "shape": (n) => n.data("type") === "file" ? "round-rectangle"
-          : n.data("type") === "view" ? "diamond" : "ellipse" } },
+        "shape": (n) => { const t = n.data("type");
+          return t === "file" ? "round-rectangle" : t === "view" ? "diamond"
+            : t === "chart" ? "hexagon" : t === "report" ? "tag"
+            : t === "process" ? "barrel" : "ellipse"; } } },
     { selector: "node.hl", style: { "border-color": "#ec0000", "border-width": 3,
         "width": 30, "height": 30, "font-weight": 700, "color": "#fff" } },
     { selector: "edge", style: {
@@ -101,6 +105,11 @@ function cyStyle() {
         "target-arrow-shape": "triangle", "curve-style": "bezier", "arrow-scale": 1,
         "line-style": (e) => e.data("confidence") === "low" ? "dashed" : "solid", "opacity": 0.8 } },
     { selector: "edge.hl", style: { "width": 3.5, "opacity": 1, "z-index": 99 } },
+    { selector: "edge.ai-edge", style: {
+        "line-color": "#f59e0b", "target-arrow-color": "#f59e0b",
+        "target-arrow-shape": "triangle", "line-style": "solid",
+        "width": 2.5, "opacity": 0.95, "z-index": 50 } },
+    { selector: "node.ai-node", style: { "border-color": "#f59e0b", "border-width": 2.5 } },
     { selector: ".faded", style: { "opacity": 0.08, "text-opacity": 0.08 } },
     { selector: ".hidden", style: { "display": "none" } },
   ];
@@ -123,7 +132,8 @@ function render(data) {
   renderDatasets(data);
   renderOperations(data);
   renderReview(data);
-  switchTab("summary");
+  switchView("summary");
+  if (agentEnabled) runAgentReview();
 }
 
 // ---------------------------------------------------------------------------
@@ -190,6 +200,7 @@ function renderDatasets(data) {
     ["root", "Source", data.roots || []],
     ["mid", "Intermediate", data.intermediate || []],
     ["sink", "Output", data.sinks || []],
+    ["runtime", "Runtime / dynamic", data.runtime || []],
   ];
   const ds = data.datasets || {};
   let html = "";
@@ -208,7 +219,11 @@ function renderDatasets(data) {
   pane.querySelectorAll(".list-item").forEach((el) =>
     el.onclick = () => focusNode(el.dataset.node));
 }
-function iconFor(t) { return t === "file" ? "◰" : t === "view" ? "◇" : "▦"; }
+function iconFor(t) {
+  return t === "file" ? "◰" : t === "view" ? "◇"
+    : t === "chart" ? "▨" : t === "report" ? "▤"
+    : t === "process" ? "⚙" : "▦";
+}
 
 // ---------------------------------------------------------------------------
 // Operations tab
@@ -241,6 +256,7 @@ function renderReview(data) {
   else badge.hidden = true;
   const c = confidenceStats(data);
   const unresolved = c.low + c.medium;
+  const integrityHtml = renderIntegrity(data.integrity);
   const warnHtml = warns.length
     ? warns.map((w) => `<div class="warn-item"><span>⚠</span><span>${esc(w)}</span></div>`).join("")
     : `<div class="ok-state"><div class="big">✓</div><p>No gaps or low-confidence mappings.<br/>All lineage is backed by code evidence.</p></div>`;
@@ -248,16 +264,45 @@ function renderReview(data) {
     <div class="agent-block">
       <div class="agent-top">
         <div>
-          <div class="sec-title" style="margin-top:0">AI lineage review</div>
-          <p class="muted empty" style="margin:2px 0 0">Two agents: a <b>discovery</b> agent proposes lineage for the ${unresolved} medium/low-confidence &amp; dynamic cases (SAS macros, SELECT INTO), then a <b>validation</b> agent independently checks each proposal against the code evidence and knowledge base.</p>
+          <div class="sec-title" style="margin-top:0">AI lineage review <span class="auto-badge">automatic</span></div>
+          <p class="muted empty" style="margin:2px 0 0">Every analysis runs a mandatory two-stage AI layer on top of the parser: a <b>discovery</b> agent resolves the ${unresolved} medium/low-confidence &amp; dynamic edge cases (SAS macros, SELECT INTO) the parser can't close statically, then a <b>validation</b> agent independently checks each proposal against the code evidence and knowledge base.</p>
         </div>
-        <button class="btn primary sm" id="agentBtn"${agentEnabled ? "" : " disabled"}>✦ Ask AI to review</button>
       </div>
-      ${agentEnabled ? "" : `<div class="agent-hint">Set <code>GROQ_API_KEY</code> on the server to enable the AI review agent.</div>`}
+      ${agentEnabled ? "" : `<div class="agent-hint">⚠ AI review is required but <code>GROQ_API_KEY</code> is not set on the server.</div>`}
       <div id="agentResult" class="agent-result"></div>
     </div>`;
-  $("paneReview").innerHTML = warnHtml + agentSection;
-  if ($("agentBtn")) $("agentBtn").onclick = runAgentReview;
+  $("paneReview").innerHTML = integrityHtml + warnHtml + agentSection;
+}
+
+function renderIntegrity(ig) {
+  if (!ig) return "";
+  const st = ig.status || "review";
+  const meta = {
+    sound: { color: "var(--sink)", label: "Sound", ico: "✓" },
+    review: { color: "var(--sas)", label: "Review advised", ico: "△" },
+    attention: { color: "var(--accent)", label: "Needs attention", ico: "!" },
+  }[st] || { color: "var(--muted)", label: st, ico: "•" };
+  const sm = ig.summary || {};
+  const checks = (ig.checks || []).map((ch) => {
+    const sv = { error: "var(--accent)", warn: "var(--sas)", info: "var(--muted)" }[ch.severity] || "var(--muted)";
+    const items = (ch.items || []).length
+      ? `<ul class="ig-items">${ch.items.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : "";
+    return `<div class="ig-check" style="border-color:${sv}">
+      <div class="ig-check-head"><span class="ig-dot" style="background:${sv}"></span>
+        <b>${esc(ch.label)}</b><span class="ig-count">${ch.count}</span></div>
+      <div class="ig-detail">${esc(ch.detail || "")}</div>${items}</div>`;
+  }).join("");
+  return `<div class="integrity-block">
+    <div class="ig-top">
+      <div class="ig-score" style="border-color:${meta.color};color:${meta.color}">${ig.score}</div>
+      <div>
+        <div class="sec-title" style="margin:0">Lineage integrity
+          <span class="ig-status" style="color:${meta.color}">${meta.ico} ${esc(meta.label)}</span></div>
+        <p class="muted empty" style="margin:2px 0 0">A deterministic audit of the <b>whole</b> graph (not just AI proposals): ${sm.datasets ?? 0} datasets, ${sm.edges ?? 0} edges · ${sm.cycles ?? 0} cycles · ${sm.orphans ?? 0} orphans · ${sm.undefined ?? 0} undefined.</p>
+      </div>
+    </div>
+    ${checks || `<div class="ok-state sm"><div class="big">✓</div><p>No structural issues — acyclic, fully connected, every dataset defined.</p></div>`}
+  </div>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -274,7 +319,7 @@ function selectNode(node) {
   $("paneDetails").innerHTML = `
     <div class="d-head">
       <span class="bubble" style="background:${ROLE_COLOR[d.role]}">${iconFor(d.type)}</span>
-      <div><h3>${esc(d.label)}</h3><span class="role">${d.role === "root" ? "Source" : d.role === "sink" ? "Output" : "Intermediate"} · ${d.type}</span></div>
+      <div><h3>${esc(d.label)}</h3><span class="role">${d.role === "root" ? "Source" : d.role === "sink" ? "Output" : d.role === "runtime" ? "Runtime (dynamic)" : "Intermediate"} · ${d.type}</span></div>
     </div>
     <div class="d-actions">
       <button class="btn ghost sm" id="traceSrc">↞ Trace to source</button>
@@ -288,7 +333,7 @@ function selectNode(node) {
   wireChips($("paneDetails"));
   $("traceSrc").onclick = () => tracePath(node, "in");
   $("traceImp").onclick = () => tracePath(node, "out");
-  switchTab("details");
+  switchView("details");
 }
 
 function selectEdge(edge) {
@@ -302,7 +347,7 @@ function selectEdge(edge) {
     <div class="drow"><div class="k">Confidence</div><div class="v">${d.confidence}</div></div>
     <div class="drow"><div class="k">Evidence</div><div class="v">${esc(d.file)}${d.line ? " : line " + d.line : ""}</div></div>
     <div class="drow"><div class="k">Code</div><pre class="code">${esc(d.snippet || "")}</pre></div>`;
-  switchTab("details");
+  switchView("details");
 }
 
 function selectEdgeByOp(op) {
@@ -398,11 +443,34 @@ function runSearch(q) {
 }
 
 // ---------------------------------------------------------------------------
-// Tabs
+// Left-rail view switching (Lineage sub-views + History)
 // ---------------------------------------------------------------------------
-function switchTab(name) {
-  document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === name));
+function switchView(name) {
+  document.querySelectorAll(".rail-item").forEach((t) => t.classList.toggle("active", t.dataset.view === name));
+  const isHistory = name === "history";
+  const panel = document.querySelector(".ws-panel");
+  const graph = $("graph");
+  const hist = $("wsHistory");
+  const legend = $("wsLegend");
+  if (panel) panel.hidden = isHistory;
+  if (graph) graph.hidden = isHistory;
+  if (hist) hist.hidden = !isHistory;
+  if (legend) legend.hidden = isHistory;
+
+  if (isHistory) {
+    if (currentUser) loadHistory();
+    else renderHistoryCTA();
+    return;
+  }
+
   document.querySelectorAll(".tabpane").forEach((p) => p.classList.toggle("active", p.dataset.pane === name));
+  const title = $("panelTitle");
+  if (title) title.textContent = LINEAGE_VIEWS[name] || "";
+  // The Review view carries wide AI cards — give the panel more room.
+  if (panel) {
+    panel.classList.toggle("wide", name === "review");
+    if (cy) setTimeout(() => cy.resize(), 210);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -435,16 +503,20 @@ async function checkAuth() {
 }
 
 function updateAcctUI() {
-  const area = $("acctArea");
-  if (currentUser) {
-    area.innerHTML = `
-      <span class="acct-email" title="${esc(currentUser.email)}">${esc(currentUser.email)}</span>
-      <button class="btn ghost sm" id="signOutBtn">Sign out</button>`;
-    $("signOutBtn").onclick = signOut;
-  } else {
-    area.innerHTML = `<button class="btn ghost sm" id="signInBtn">Sign in</button>`;
-    $("signInBtn").onclick = () => openAuth("login");
+  const loggedIn = !!currentUser;
+  const acctHtml = loggedIn
+    ? `<span class="acct-email" title="${esc(currentUser.username)}">${esc(currentUser.username)}</span>
+       <button class="btn ghost sm" data-signout>Sign out</button>`
+    : `<button class="btn ghost sm" data-signin>Sign in</button>`;
+  const home = $("acctArea");
+  if (home) home.innerHTML = acctHtml;
+  const rail = $("acctAreaWs");
+  if (rail) {
+    rail.innerHTML = loggedIn ? acctHtml
+      : `<button class="btn ghost sm block" data-signin>Sign in to save</button>`;
   }
+  document.querySelectorAll("[data-signout]").forEach((b) => b.onclick = signOut);
+  document.querySelectorAll("[data-signin]").forEach((b) => b.onclick = () => openAuth("login"));
 }
 
 function openAuth(mode) {
@@ -453,7 +525,7 @@ function openAuth(mode) {
   $("authForm").reset();
   applyAuthMode();
   $("authModal").hidden = false;
-  $("authEmail").focus();
+  $("authUsername").focus();
 }
 function closeAuth() { $("authModal").hidden = true; }
 function applyAuthMode() {
@@ -470,13 +542,13 @@ function applyAuthMode() {
 
 async function submitAuth(e) {
   e.preventDefault();
-  const email = $("authEmail").value.trim();
+  const username = $("authUsername").value.trim();
   const password = $("authPassword").value;
   const url = authMode === "login" ? "/api/auth/login" : "/api/auth/register";
   try {
     const res = await fetch(url, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password }),
+      body: JSON.stringify({ username, password }),
     });
     const data = await res.json();
     if (!res.ok) {
@@ -497,11 +569,20 @@ async function signOut() {
   currentUser = null;
   updateAcctUI();
   $("historySection").hidden = true;
+  const wsHist = $("wsHistory");
+  if (wsHist && !wsHist.hidden) renderHistoryCTA();
 }
 
 // ---------------------------------------------------------------------------
 // History
 // ---------------------------------------------------------------------------
+function goHomeHistory() {
+  if (!currentUser) { openAuth("login"); return; }
+  const sec = $("historySection");
+  if (sec) { sec.hidden = false; sec.scrollIntoView({ behavior: "smooth", block: "start" }); }
+  loadHistory();
+}
+
 async function loadHistory() {
   if (!currentUser) return;
   try {
@@ -514,9 +595,25 @@ async function loadHistory() {
 
 function renderHistory(analyses) {
   const sec = $("historySection");
-  const list = $("historyList");
-  $("historyCount").textContent = analyses.length ? `${analyses.length} saved` : "";
-  sec.hidden = false;
+  if (sec) sec.hidden = false;
+  fillHistory($("historyList"), $("historyCount"), analyses);
+  fillHistory($("historyListWs"), $("historyCountWs"), analyses);
+}
+
+function renderHistoryCTA() {
+  const list = $("historyListWs");
+  const count = $("historyCountWs");
+  if (count) count.textContent = "";
+  if (!list) return;
+  list.innerHTML = `<div class="hist-cta">
+    <p class="muted">Sign in to save analyses and revisit them any time.</p>
+    <button class="btn primary sm" data-signin>Sign in</button></div>`;
+  list.querySelectorAll("[data-signin]").forEach((b) => b.onclick = () => openAuth("login"));
+}
+
+function fillHistory(list, countEl, analyses) {
+  if (!list) return;
+  if (countEl) countEl.textContent = analyses.length ? `${analyses.length} saved` : "";
   if (!analyses.length) {
     list.innerHTML = `<p class="muted empty">No saved analyses yet. Parse some code and hit ★ Save.</p>`;
     return;
@@ -586,9 +683,7 @@ async function saveCurrent() {
 async function runAgentReview() {
   if (!lastResult) return;
   const host = $("agentResult");
-  if (host) host.innerHTML = `<div class="agent-loading"><div class="spinner sm"></div> Reviewing low-confidence mappings…</div>`;
-  const btn = $("agentBtn");
-  if (btn) btn.disabled = true;
+  if (host) host.innerHTML = `<div class="agent-loading"><div class="spinner sm"></div> Stage 1 · discovery agent resolving medium/low-confidence &amp; edge cases…</div>`;
   try {
     const res = await fetch("/api/agent/review", {
       method: "POST", headers: { "Content-Type": "application/json" },
@@ -597,9 +692,7 @@ async function runAgentReview() {
     const data = await res.json();
     renderAgentResult(data);
   } catch (e) {
-    if (host) host.innerHTML = `<div class="warn-item"><span>⚠</span><span>Agent request failed.</span></div>`;
-  } finally {
-    if (btn) btn.disabled = false;
+    if (host) host.innerHTML = `<div class="warn-item"><span>⚠</span><span>AI review failed to run.</span></div>`;
   }
 }
 
@@ -612,9 +705,11 @@ function renderAgentResult(data) {
   }
   const proposals = data.proposals || [];
   if (!proposals.length) {
+    lastProposals = [];
     host.innerHTML = `<p class="muted empty">${esc(data.message || "No proposals returned.")}</p>`;
     return;
   }
+  lastProposals = proposals;
   const vmap = {};
   (data.validations || []).forEach((v) => { vmap[v.op_id] = v; });
   const globalV = vmap["*"];
@@ -624,12 +719,12 @@ function renderAgentResult(data) {
     (ku.glossary && ku.glossary.length ? ` · glossary [${ku.glossary.map(esc).join(", ")}]` : "");
   let html = `<div class="agent-note">
     <b>Stage 1 Discovery</b> → <b>Stage 2 Validation</b> · reviewed ${data.reviewed ?? proposals.length} op(s) with ${esc(data.model || "the model")}.<br>
-    ${esc(kbline)}<br>Proposals are AI-generated and independently validated — confirm before accepting.</div>`;
+    ${esc(kbline)}<br>Accept a proposal to add it to the lineage graph as an AI-inferred edge, or reject it.</div>`;
   if (globalV) {
     html += `<div class="warn-item"><span>⚠</span><span>Validation stage: ${esc((globalV.issues || []).join("; ") || globalV.comment || "unavailable")}</span></div>`;
   }
 
-  html += proposals.map((s) => {
+  html += proposals.map((s, i) => {
     const conf = Math.round((s.confidence ?? 0) * 100);
     const cc = conf >= 75 ? "var(--sink)" : conf >= 50 ? "var(--sas)" : "var(--accent)";
     const asum = (s.assumptions || []).map((a) => `<li>${esc(a)}</li>`).join("");
@@ -647,7 +742,7 @@ function renderAgentResult(data) {
         ${issues ? `<div class="agent-asum"><span>Issues</span><ul>${issues}</ul></div>` : ""}
       </div>`;
     }
-    return `<div class="agent-card">
+    return `<div class="agent-card" data-idx="${i}">
       <div class="agent-head">
         <span class="agent-op">${esc(s.op_id || "op")}</span>
         <span class="agent-conf" style="color:${cc}">${conf}% proposed</span>
@@ -657,9 +752,125 @@ function renderAgentResult(data) {
       ${s.rationale ? `<div class="agent-rat">${esc(s.rationale)}</div>` : ""}
       ${asum ? `<div class="agent-asum"><span>Assumptions</span><ul>${asum}</ul></div>` : ""}
       ${verdict}
+      <div class="agent-actions">
+        <button class="btn sm accept" data-accept="${i}">✓ Accept into lineage</button>
+        <button class="btn sm reject" data-reject="${i}">✗ Reject</button>
+      </div>
     </div>`;
   }).join("");
   host.innerHTML = html;
+  host.querySelectorAll("[data-accept]").forEach((b) => b.onclick = () => acceptProposal(+b.dataset.accept));
+  host.querySelectorAll("[data-reject]").forEach((b) => b.onclick = () => rejectProposal(+b.dataset.reject));
+}
+
+// ---------------------------------------------------------------------------
+// Accept / reject agent proposals — accepted ones become AI-inferred edges.
+// ---------------------------------------------------------------------------
+function resolveNodeId(name) {
+  if (!cy || name == null) return null;
+  const exact = cy.getElementById(String(name));
+  if (exact && exact.nonempty()) return String(name);
+  const lower = String(name).toLowerCase();
+  const match = cy.nodes().filter((x) =>
+    String(x.data("label")).toLowerCase() === lower || String(x.id()).toLowerCase() === lower);
+  return match.nonempty() ? match[0].id() : null;
+}
+
+function ensureGraphNode(name) {
+  let id = resolveNodeId(name);
+  if (id) return id;
+  id = "ai::" + name;
+  if (cy.getElementById(id).empty()) {
+    const data = { id, label: String(name), type: "inferred", role: "mid", source_file: "AI-inferred" };
+    cy.add({ group: "nodes", data, classes: "ai-node" });
+    if (lastResult && lastResult.elements) lastResult.elements.push({ data, classes: "ai-node" });
+  }
+  return id;
+}
+
+function addAiEdge(sId, tId, p) {
+  if (sId === tId) return;
+  // If the parser already drew an edge between these two nodes, confirm it in
+  // place (solid amber) instead of stacking a second parallel dashed line.
+  const existing = cy.edges().filter((e) =>
+    e.data("source") === sId && e.data("target") === tId && !e.hasClass("ai-edge"));
+  if (existing.nonempty()) {
+    existing.addClass("ai-edge").data("aiConfirmed", true);
+    return;
+  }
+  const id = "ai::" + sId + "::" + tId;
+  if (cy.getElementById(id).nonempty()) return;
+  const data = {
+    id, source: sId, target: tId, language: "ai", confidence: "ai",
+    kind: "ai-inferred", file: p.op_id || "", line: 0, snippet: p.rationale || "",
+  };
+  cy.add({ group: "edges", data, classes: "ai-edge" });
+  if (lastResult && lastResult.elements) lastResult.elements.push({ data, classes: "ai-edge" });
+}
+
+function acceptProposal(idx) {
+  const p = lastProposals[idx];
+  if (!p || !cy) return;
+  const tId = ensureGraphNode(p.proposed_target || `ai-target-${idx}`);
+  (p.proposed_inputs || []).forEach((inp) => addAiEdge(ensureGraphNode(inp), tId, p));
+  cy.layout({ name: "dagre", rankDir, nodeSep: 26, rankSep: 85, edgeSep: 10, padding: 36 }).run();
+  markProposal(idx, "accepted");
+}
+
+function rejectProposal(idx) { markProposal(idx, "rejected"); }
+
+function markProposal(idx, state) {
+  const card = document.querySelector(`.agent-card[data-idx="${idx}"]`);
+  if (!card) return;
+  card.classList.remove("accepted", "rejected");
+  card.classList.add(state);
+  const actions = card.querySelector(".agent-actions");
+  if (actions) {
+    actions.innerHTML = state === "accepted"
+      ? `<span class="agent-status ok">✓ Accepted · added to lineage graph</span>
+         <button class="btn sm reject" data-reject="${idx}">Undo</button>`
+      : `<span class="agent-status no">✗ Rejected</span>
+         <button class="btn sm accept" data-accept="${idx}">Accept instead</button>`;
+    actions.querySelectorAll("[data-accept]").forEach((b) => b.onclick = () => acceptProposal(+b.dataset.accept));
+    actions.querySelectorAll("[data-reject]").forEach((b) => b.onclick = () => undoProposal(+b.dataset.reject));
+  }
+}
+
+function undoProposal(idx) {
+  const p = lastProposals[idx];
+  if (p && cy) {
+    const tId = resolveNodeId(p.proposed_target);
+    (p.proposed_inputs || []).forEach((inp) => {
+      const sId = resolveNodeId(inp);
+      if (sId && tId) {
+        const eid = "ai::" + sId + "::" + tId;
+        const e = cy.getElementById(eid);
+        if (e.nonempty()) e.remove();
+        if (lastResult && lastResult.elements) {
+          lastResult.elements = lastResult.elements.filter((el) => !(el.data && el.data.id === eid));
+        }
+        // revert any parser edge we confirmed in place
+        cy.edges().filter((x) => x.data("source") === sId && x.data("target") === tId && x.data("aiConfirmed"))
+          .removeClass("ai-edge").removeData("aiConfirmed");
+      }
+    });
+    cy.nodes(".ai-node").forEach((n) => { if (n.connectedEdges().empty()) {
+      const nid = n.id();
+      n.remove();
+      if (lastResult && lastResult.elements) lastResult.elements = lastResult.elements.filter((el) => !(el.data && el.data.id === nid));
+    }});
+  }
+  const card = document.querySelector(`.agent-card[data-idx="${idx}"]`);
+  if (card) {
+    card.classList.remove("accepted", "rejected");
+    const actions = card.querySelector(".agent-actions");
+    if (actions) {
+      actions.innerHTML = `<button class="btn sm accept" data-accept="${idx}">✓ Accept into lineage</button>
+        <button class="btn sm reject" data-reject="${idx}">✗ Reject</button>`;
+      actions.querySelectorAll("[data-accept]").forEach((b) => b.onclick = () => acceptProposal(+b.dataset.accept));
+      actions.querySelectorAll("[data-reject]").forEach((b) => b.onclick = () => rejectProposal(+b.dataset.reject));
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -676,8 +887,21 @@ function initEvents() {
 
   $("demoBtn") && ($("demoBtn").onclick = loadDemo);
   $("newBtn").onclick = showHome;
+  $("homeHistoryBtn") && ($("homeHistoryBtn").onclick = goHomeHistory);
 
-  document.querySelectorAll(".tab").forEach((t) => t.onclick = () => switchTab(t.dataset.tab));
+  // Brand (logo + wordmark) returns to home / new analysis.
+  const brandWs = $("brandWs");
+  if (brandWs) {
+    brandWs.onclick = showHome;
+    brandWs.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); showHome(); } };
+  }
+  const brandHome = $("brandHome");
+  if (brandHome) {
+    brandHome.onclick = showHome;
+    brandHome.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); showHome(); } };
+  }
+
+  document.querySelectorAll(".rail-item").forEach((t) => t.onclick = () => switchView(t.dataset.view));
   document.querySelectorAll(".chip-toggle").forEach((c) => c.onclick = () => {
     const lang = c.dataset.lang;
     if (activeLangs.has(lang)) activeLangs.delete(lang); else activeLangs.add(lang);
@@ -696,8 +920,7 @@ function initEvents() {
   $("exportOl").onclick = () => lastResult && download("openlineage.json", JSON.stringify(lastResult.openlineage, null, 2));
   $("saveBtn").onclick = saveCurrent;
 
-  // Auth
-  $("signInBtn").onclick = () => openAuth("login");
+  // Auth (sign-in / sign-out buttons are wired in updateAcctUI)
   $("authClose").onclick = closeAuth;
   $("authToggle").onclick = () => { authMode = authMode === "login" ? "register" : "login"; $("authError").hidden = true; applyAuthMode(); };
   $("authForm").onsubmit = submitAuth;
@@ -706,5 +929,6 @@ function initEvents() {
 }
 
 initEvents();
+updateAcctUI();
 loadBatchCards();
 checkAuth();

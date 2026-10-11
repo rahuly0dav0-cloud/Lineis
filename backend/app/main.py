@@ -1,11 +1,13 @@
 """FastAPI entry point for the Lineis lineage prototype."""
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from fastapi import FastAPI, UploadFile, File, Form, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
 from starlette.middleware.sessions import SessionMiddleware
 
 from . import agent, db
@@ -18,6 +20,8 @@ BASE_DIR = Path(__file__).resolve().parent.parent.parent
 FRONTEND_DIR = BASE_DIR / "frontend"
 SAMPLES_DIR = BASE_DIR / "samples"
 BATCHES_DIR = BASE_DIR / "test_batches"
+
+_USERNAME_RE = re.compile(r"[A-Za-z0-9_.-]{3,30}")
 
 app = FastAPI(title="Lineis Lineage Engine", version="0.2.0")
 app.add_middleware(SessionMiddleware, secret_key=SECRET_KEY, same_site="lax")
@@ -104,29 +108,30 @@ def parse_batch(name: str = Form(...), dialect: str = Form("")) -> JSONResponse:
 @app.post("/api/auth/register")
 async def register(request: Request) -> JSONResponse:
     data = await request.json()
-    email = (data.get("email") or "").strip()
+    username = (data.get("username") or "").strip()
     password = data.get("password") or ""
-    if "@" not in email or len(password) < 6:
+    if not _USERNAME_RE.fullmatch(username) or len(password) < 6:
         return JSONResponse(
-            {"error": "Valid email and a password of 6+ characters required."},
+            {"error": "Username must be 3-30 characters (letters, digits, . _ -) "
+                      "and password at least 6 characters."},
             status_code=400)
-    user = db.create_user(email, password)
+    user = db.create_user(username, password)
     if user is None:
-        return JSONResponse({"error": "That email is already registered."},
+        return JSONResponse({"error": "That username is already taken."},
                             status_code=409)
     request.session["user_id"] = user["id"]
-    return JSONResponse({"email": user["email"]})
+    return JSONResponse({"username": user["username"]})
 
 
 @app.post("/api/auth/login")
 async def login(request: Request) -> JSONResponse:
     data = await request.json()
-    user = db.verify_user(data.get("email") or "", data.get("password") or "")
+    user = db.verify_user(data.get("username") or "", data.get("password") or "")
     if user is None:
-        return JSONResponse({"error": "Invalid email or password."},
+        return JSONResponse({"error": "Invalid username or password."},
                             status_code=401)
     request.session["user_id"] = user["id"]
-    return JSONResponse({"email": user["email"]})
+    return JSONResponse({"username": user["username"]})
 
 
 @app.post("/api/auth/logout")
@@ -195,7 +200,10 @@ def remove_history(analysis_id: int, request: Request) -> JSONResponse:
 async def agent_review(request: Request) -> JSONResponse:
     data = await request.json()
     result = data.get("result") or {}
-    return JSONResponse(agent.review(result))
+    # Offload to a worker thread so the blocking HTTP call + rate-limit backoff
+    # sleeps never freeze the event loop.
+    review = await run_in_threadpool(agent.review, result)
+    return JSONResponse(review)
 
 
 app.mount("/static", StaticFiles(directory=FRONTEND_DIR / "static"), name="static")

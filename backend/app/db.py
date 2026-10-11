@@ -27,11 +27,15 @@ def get_conn() -> sqlite3.Connection:
 
 def init_db() -> None:
     with get_conn() as conn:
+        # Migrate legacy 'email' column to 'username' for existing local DBs.
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(users)").fetchall()]
+        if cols and "email" in cols and "username" not in cols:
+            conn.execute("ALTER TABLE users RENAME COLUMN email TO username")
         conn.executescript(
             """
             CREATE TABLE IF NOT EXISTS users (
                 id            INTEGER PRIMARY KEY AUTOINCREMENT,
-                email         TEXT UNIQUE NOT NULL,
+                username      TEXT UNIQUE NOT NULL,
                 password_hash TEXT NOT NULL,
                 salt          TEXT NOT NULL,
                 created_at    TEXT NOT NULL
@@ -58,32 +62,32 @@ def _hash_password(password: str, salt: bytes) -> str:
     return dk.hex()
 
 
-def create_user(email: str, password: str) -> Optional[dict[str, Any]]:
+def create_user(username: str, password: str) -> Optional[dict[str, Any]]:
     salt = os.urandom(16)
     pwd_hash = _hash_password(password, salt)
     try:
         with get_conn() as conn:
             cur = conn.execute(
-                "INSERT INTO users (email, password_hash, salt, created_at) "
+                "INSERT INTO users (username, password_hash, salt, created_at) "
                 "VALUES (?, ?, ?, ?)",
-                (email.lower(), pwd_hash, salt.hex(), _now()),
+                (username.lower(), pwd_hash, salt.hex(), _now()),
             )
-            return {"id": cur.lastrowid, "email": email.lower()}
+            return {"id": cur.lastrowid, "username": username.lower()}
     except sqlite3.IntegrityError:
-        return None  # email already registered
+        return None  # username already taken
 
 
-def verify_user(email: str, password: str) -> Optional[dict[str, Any]]:
+def verify_user(username: str, password: str) -> Optional[dict[str, Any]]:
     with get_conn() as conn:
         row = conn.execute(
-            "SELECT * FROM users WHERE email = ?", (email.lower(),)
+            "SELECT * FROM users WHERE username = ?", (username.lower(),)
         ).fetchone()
     if row is None:
         return None
     expected = _hash_password(password, bytes.fromhex(row["salt"]))
     if not _constant_time_eq(expected, row["password_hash"]):
         return None
-    return {"id": row["id"], "email": row["email"]}
+    return {"id": row["id"], "username": row["username"]}
 
 
 def _constant_time_eq(a: str, b: str) -> bool:
@@ -94,7 +98,7 @@ def _constant_time_eq(a: str, b: str) -> bool:
 def get_user(user_id: int) -> Optional[dict[str, Any]]:
     with get_conn() as conn:
         row = conn.execute(
-            "SELECT id, email, created_at FROM users WHERE id = ?", (user_id,)
+            "SELECT id, username, created_at FROM users WHERE id = ?", (user_id,)
         ).fetchone()
     return dict(row) if row else None
 

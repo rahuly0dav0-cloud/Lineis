@@ -1,0 +1,14 @@
+{
+  "file": "samples/01_ingest_core_banking.py",
+  "language": "python",
+  "mode": "complete",
+  "notes": "Stage 1 ingest: raw_* core-banking files -> stg_* staging. build_transactions merges fx_rates into stg_transactions.",
+  "edges": [
+    ["raw_customers", "stg_customers"],
+    ["raw_accounts", "stg_accounts"],
+    ["raw_transactions", "stg_transactions"],
+    ["fx_rates", "stg_transactions"],
+    ["raw_collateral", "stg_collateral"]
+  ],
+  "forbidden": []
+}

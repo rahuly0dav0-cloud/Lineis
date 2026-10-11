@@ -28,6 +28,10 @@
     {
       "id": "join_keys",
       "rule": "For joins/merges, capture the join key(s) as part of the evidence; they justify the edge and support column-level lineage."
+    },
+    {
+      "id": "glossary_scope",
+      "rule": "The glossary only defines what a name MEANS, to help read the code. It is never evidence of a data flow. Never propose or justify an edge because two terms are related in business meaning — every edge must come from the code snippet. If a glossary term is not present in the evidence, ignore it."
     }
   ]
 }

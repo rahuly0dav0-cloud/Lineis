@@ -33,11 +33,15 @@ def analyze(result: ParseResult) -> dict[str, Any]:
     g = build_graph(result)
 
     roots = sorted(n for n in g.nodes if g.in_degree(n) == 0 and g.out_degree(n) > 0)
-    sinks = sorted(n for n in g.nodes if g.out_degree(n) == 0 and g.in_degree(n) > 0)
+    # the runtime node is a dynamic boundary, not a business output — keep it out of sinks
+    sinks = sorted(n for n in g.nodes
+                   if g.out_degree(n) == 0 and g.in_degree(n) > 0
+                   and g.nodes[n].get("type") != "process")
     intermediate = sorted(n for n in g.nodes
                           if g.in_degree(n) > 0 and g.out_degree(n) > 0)
     isolated = sorted(n for n in g.nodes
                       if g.in_degree(n) == 0 and g.out_degree(n) == 0)
+    runtime = sorted(n for n in g.nodes if g.nodes[n].get("type") == "process")
 
     try:
         cycles = list(nx.simple_cycles(g))
@@ -57,6 +61,8 @@ def analyze(result: ParseResult) -> dict[str, Any]:
         by_language[op.language] = by_language.get(op.language, 0) + 1
         by_file[op.file] = by_file.get(op.file, 0) + 1
 
+    integrity = _integrity(g, result, isolated, cycles)
+
     elements = _to_cytoscape(g, set(roots), set(sinks))
     return {
         "elements": elements,
@@ -64,6 +70,8 @@ def analyze(result: ParseResult) -> dict[str, Any]:
         "sinks": sinks,
         "intermediate": intermediate,
         "isolated": isolated,
+        "runtime": runtime,
+        "integrity": integrity,
         "stats": {
             "datasets": g.number_of_nodes(),
             "operations": len(result.operations),
@@ -83,14 +91,127 @@ def analyze(result: ParseResult) -> dict[str, Any]:
     }
 
 
+def _integrity(g: nx.DiGraph, result: ParseResult, isolated: list[str],
+               cycles: list[list[str]]) -> dict[str, Any]:
+    """Deterministic whole-graph integrity audit (no AI).
+
+    The AI validation agent only re-checks the handful of low/medium-confidence
+    proposals. This audit instead inspects the *entire* lineage for structural
+    soundness, so the graph can be trusted as a whole, not just op-by-op.
+    """
+    def _name(node_id: str) -> str:
+        return g.nodes.get(node_id, {}).get("name", node_id)
+
+    checks: list[dict[str, Any]] = []
+
+    # 1) Cyclic dependencies — usually SAS iterative/in-place rebuilds.
+    if cycles:
+        checks.append({
+            "id": "cycles", "label": "Cyclic dependencies", "severity": "warn",
+            "count": len(cycles),
+            "detail": "A dataset feeds itself through the chain. In SAS this is "
+                      "normally an intentional iterative/in-place rebuild "
+                      "(data X; set X; …) rather than an error — shown so the "
+                      "loop is explicit. Confirm it is deliberate.",
+            "items": [" → ".join(_name(n) for n in cyc) + " → " + _name(cyc[0])
+                      for cyc in cycles[:10]],
+        })
+
+    # 2) Orphan datasets — parsed but not wired into any flow.
+    if isolated:
+        checks.append({
+            "id": "isolated", "label": "Orphan datasets (no lineage)", "severity": "warn",
+            "count": len(isolated),
+            "detail": "Referenced in code but not connected to any transformation "
+                      "— typically read-only references (proc print/contents/means) "
+                      "or a step the parser could not resolve.",
+            "items": [_name(n) for n in isolated[:25]],
+        })
+
+    # 3) Undefined sources — endpoints auto-created because no step produced them.
+    unknown = sorted(n for n, d in g.nodes(data=True) if d.get("type") == "unknown")
+    if unknown:
+        checks.append({
+            "id": "undefined", "label": "Undefined datasets", "severity": "warn",
+            "count": len(unknown),
+            "detail": "Used as an input/target but never declared in the parsed "
+                      "code. Likely an external/library table loaded elsewhere, or "
+                      "a name the parser missed.",
+            "items": [_name(n) for n in unknown[:25]],
+        })
+
+    # 4) Multiple producers — same target written by more than one operation.
+    producers: dict[str, int] = {}
+    for op in result.operations:
+        producers[op.target] = producers.get(op.target, 0) + 1
+    multi = sorted(t for t, n in producers.items() if n > 1)
+    if multi:
+        checks.append({
+            "id": "multi_producer", "label": "Datasets built in multiple steps",
+            "severity": "info", "count": len(multi),
+            "detail": "Written by more than one operation. Common and valid in SAS "
+                      "(iterative rebuilds of the same table); listed so overwrites "
+                      "are visible and intentional.",
+            "items": [_name(t) for t in multi[:25]],
+        })
+
+    # 5) Low-confidence edges still awaiting review.
+    low = [op for op in result.operations if op.confidence == "low"]
+    if low:
+        checks.append({
+            "id": "low_conf", "label": "Low-confidence mappings", "severity": "info",
+            "count": len(low),
+            "detail": "Resolved statically but with weak evidence (constants, "
+                      "dynamic macros). Candidates for the AI review step.",
+            "items": [f"{_name(op.target)} ({op.file})" for op in low[:25]],
+        })
+
+    # Weighted score — undefined/orphan structure hurts most; SAS rebuild
+    # cycles are usually intentional so they carry a lighter penalty.
+    score = 100
+    score -= min(20, 6 * len(cycles))
+    score -= min(25, 3 * len(isolated))
+    score -= min(20, 4 * len(unknown))
+    score -= min(10, 2 * len(low))
+    score = max(0, score)
+
+    if unknown:
+        status = "attention"
+    elif score >= 85:
+        status = "sound"
+    elif score >= 60:
+        status = "review"
+    else:
+        status = "attention"
+
+    return {
+        "score": score,
+        "status": status,
+        "checks": checks,
+        "summary": {
+            "datasets": g.number_of_nodes(),
+            "edges": g.number_of_edges(),
+            "cycles": len(cycles),
+            "orphans": len(isolated),
+            "undefined": len(unknown),
+            "multi_producer": len(multi),
+            "low_confidence": len(low),
+        },
+    }
+
+
 def _to_cytoscape(g: nx.DiGraph, roots: set[str], sinks: set[str]) -> list[dict]:
     elements: list[dict] = []
     for node_id, data in g.nodes(data=True):
-        role = "root" if node_id in roots else "sink" if node_id in sinks else "mid"
+        ntype = data.get("type", "unknown")
+        if ntype == "process":
+            role = "runtime"
+        else:
+            role = "root" if node_id in roots else "sink" if node_id in sinks else "mid"
         elements.append({"data": {
             "id": node_id,
             "label": data.get("name", node_id),
-            "type": data.get("type", "unknown"),
+            "type": ntype,
             "role": role,
             "source_file": data.get("source_file") or "",
         }})

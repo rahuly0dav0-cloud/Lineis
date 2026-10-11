@@ -1,0 +1,16 @@
+{
+  "file": "samples/03_regulatory_reports.sql",
+  "language": "sql",
+  "mode": "complete",
+  "notes": "Stage 3 BCBS 239 layer: exposures from the three mart tables; FINREP/COREP from exposures; board_risk_report view joins the two reg tables.",
+  "edges": [
+    ["customer_accounts", "exposures"],
+    ["txn_summary", "exposures"],
+    ["collateral_clean", "exposures"],
+    ["exposures", "finrep_f0401"],
+    ["exposures", "corep_c0700"],
+    ["finrep_f0401", "board_risk_report"],
+    ["corep_c0700", "board_risk_report"]
+  ],
+  "forbidden": []
+}

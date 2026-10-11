@@ -1,0 +1,2246 @@
+{
+  "01_sql_sas_python": {
+    "batch": "01_sql_sas_python",
+    "language_combination": [
+      "SQL",
+      "SAS",
+      "Python"
+    ],
+    "files": [
+      {
+        "file": "b01_stage1.sql",
+        "language": "SQL",
+        "stage": 1,
+        "physical_lines": 608,
+        "comment_padding": false
+      },
+      {
+        "file": "b01_stage2.sas",
+        "language": "SAS",
+        "stage": 2,
+        "physical_lines": 594,
+        "comment_padding": false
+      },
+      {
+        "file": "b01_stage3.py",
+        "language": "Python",
+        "stage": 3,
+        "physical_lines": 611,
+        "comment_padding": false
+      }
+    ],
+    "nodes": [
+      {
+        "id": "raw_b01.transactions",
+        "type": "source_table"
+      },
+      {
+        "id": "raw_b01.customer_history",
+        "type": "source_table"
+      },
+      {
+        "id": "ref_b01.risk_rules",
+        "type": "source_table"
+      },
+      {
+        "id": "raw_b01.fx_rates",
+        "type": "source_table"
+      },
+      {
+        "id": "raw_b01.adjustments",
+        "type": "source_table"
+      },
+      {
+        "id": "raw_b01.account_status",
+        "type": "source_table"
+      },
+      {
+        "id": "raw_b01.chargebacks",
+        "type": "source_table"
+      },
+      {
+        "id": "work_b01.stage1",
+        "type": "intermediate_table"
+      },
+      {
+        "id": "work_b01.stage2",
+        "type": "intermediate_table"
+      },
+      {
+        "id": "work_b01.stage3",
+        "type": "intermediate_table"
+      },
+      {
+        "id": "mart_b01.customer_risk_daily",
+        "type": "final_table"
+      },
+      {
+        "id": "audit_b01.lineage_run",
+        "type": "audit_table"
+      },
+      {
+        "id": "audit_b01.scenario_log",
+        "type": "audit_table"
+      },
+      {
+        "id": "work_b01.scenario_outputs",
+        "type": "intermediate_family"
+      },
+      {
+        "id": "work_b01.union_probe",
+        "type": "intermediate_table"
+      }
+    ],
+    "edges": [
+      {
+        "from": "raw_b01.transactions",
+        "to": "work_b01.stage1",
+        "relationship": "reads",
+        "via": "b01_stage1.sql"
+      },
+      {
+        "from": "raw_b01.customer_history",
+        "to": "work_b01.stage1",
+        "relationship": "reads",
+        "via": "b01_stage1.sql"
+      },
+      {
+        "from": "ref_b01.risk_rules",
+        "to": "work_b01.stage2",
+        "relationship": "reads",
+        "via": "b01_stage2.sas"
+      },
+      {
+        "from": "work_b01.stage1",
+        "to": "work_b01.stage2",
+        "relationship": "reads",
+        "via": "b01_stage2.sas"
+      },
+      {
+        "from": "raw_b01.fx_rates",
+        "to": "work_b01.stage3",
+        "relationship": "reads",
+        "via": "b01_stage3.py"
+      },
+      {
+        "from": "raw_b01.adjustments",
+        "to": "work_b01.stage3",
+        "relationship": "conditional_read",
+        "via": "b01_stage3.py"
+      },
+      {
+        "from": "work_b01.stage2",
+        "to": "work_b01.stage3",
+        "relationship": "reads",
+        "via": "b01_stage3.py"
+      },
+      {
+        "from": "raw_b01.account_status",
+        "to": "work_b01.scenario_outputs",
+        "relationship": "reads",
+        "via": "scenario blocks in all files"
+      },
+      {
+        "from": "raw_b01.chargebacks",
+        "to": "work_b01.union_probe",
+        "relationship": "reads",
+        "via": "union probe"
+      },
+      {
+        "from": "work_b01.stage3",
+        "to": "mart_b01.customer_risk_daily",
+        "relationship": "writes",
+        "via": "b01_stage3.py"
+      },
+      {
+        "from": "mart_b01.customer_risk_daily",
+        "to": "audit_b01.lineage_run",
+        "relationship": "read_for_audit",
+        "via": "b01_stage3.py"
+      }
+    ],
+    "sinks": [
+      {
+        "id": "mart_b01.customer_risk_daily",
+        "kind": "database_table"
+      },
+      {
+        "id": "parquet/b01_customer_risk_daily.parquet",
+        "kind": "parquet_file"
+      },
+      {
+        "id": "audit_b01.lineage_run",
+        "kind": "database_table"
+      }
+    ],
+    "high_risk_semantics": [
+      "recursive CTE and CTE shadowing",
+      "DISTINCT ON and ROW_NUMBER deduplication",
+      "effective-dated joins with nullable end dates",
+      "JSON extraction and COALESCE",
+      "correlated EXISTS and scalar subquery",
+      "UNION and UNION ALL branch lineage",
+      "self-join and LATERAL subquery",
+      "dynamic SQL string that is returned but not executed",
+      "runtime-generated SQL executed via pandas read_sql",
+      "SAS macro-generated dataset names",
+      "SAS hash lookup and multiple DATA step inputs",
+      "PROC SQL and PROC IMPORT dependencies",
+      "conditional source read controlled by include_adjustments",
+      "multiple independent database/file sinks",
+      "audit table reads from final output",
+      "same source object used under multiple aliases",
+      "many executable derived metrics and repeated intermediate materialization",
+      "false-positive decoy names in non-executed strings/comments"
+    ],
+    "oracle_scope_note": "This oracle captures the named canonical core graph and explicitly listed adversarial probes. Generated scenario/metric intermediates are numerous; they are catalogued by naming convention and should be compared after canonical normalization. Runtime-conditional reads should be represented as conditional edges, not unconditional edges.",
+    "canonical_expected_tree": {
+      "mart_b01.customer_risk_daily": {
+        "direct_dependencies": [
+          "work_b01.stage3"
+        ],
+        "transitive_dependencies": [
+          "work_b01.stage2",
+          "work_b01.stage1",
+          "raw_b01.transactions",
+          "raw_b01.customer_history",
+          "ref_b01.risk_rules",
+          "raw_b01.fx_rates"
+        ],
+        "conditional_dependencies": [
+          "raw_b01.adjustments"
+        ]
+      },
+      "work_b01.stage2": {
+        "direct_dependencies": [
+          "work_b01.stage1",
+          "ref_b01.risk_rules"
+        ],
+        "transitive_dependencies": [
+          "raw_b01.transactions",
+          "raw_b01.customer_history"
+        ]
+      },
+      "work_b01.stage1": {
+        "direct_dependencies": [
+          "raw_b01.transactions",
+          "raw_b01.customer_history"
+        ]
+      }
+    }
+  },
+  "02_sql_sql_sas": {
+    "batch": "02_sql_sql_sas",
+    "language_combination": [
+      "SQL",
+      "SQL",
+      "SAS"
+    ],
+    "files": [
+      {
+        "file": "b02_stage1.sql",
+        "language": "SQL",
+        "stage": 1,
+        "physical_lines": 608,
+        "comment_padding": false
+      },
+      {
+        "file": "b02_stage2.sql",
+        "language": "SQL",
+        "stage": 2,
+        "physical_lines": 608,
+        "comment_padding": false
+      },
+      {
+        "file": "b02_stage3.sas",
+        "language": "SAS",
+        "stage": 3,
+        "physical_lines": 594,
+        "comment_padding": false
+      }
+    ],
+    "nodes": [
+      {
+        "id": "raw_b02.transactions",
+        "type": "source_table"
+      },
+      {
+        "id": "raw_b02.customer_history",
+        "type": "source_table"
+      },
+      {
+        "id": "ref_b02.risk_rules",
+        "type": "source_table"
+      },
+      {
+        "id": "raw_b02.fx_rates",
+        "type": "source_table"
+      },
+      {
+        "id": "raw_b02.adjustments",
+        "type": "source_table"
+      },
+      {
+        "id": "raw_b02.account_status",
+        "type": "source_table"
+      },
+      {
+        "id": "raw_b02.chargebacks",
+        "type": "source_table"
+      },
+      {
+        "id": "work_b02.stage1",
+        "type": "intermediate_table"
+      },
+      {
+        "id": "work_b02.stage2",
+        "type": "intermediate_table"
+      },
+      {
+        "id": "work_b02.stage3",
+        "type": "intermediate_table"
+      },
+      {
+        "id": "mart_b02.customer_risk_daily",
+        "type": "final_table"
+      },
+      {
+        "id": "audit_b02.lineage_run",
+        "type": "audit_table"
+      },
+      {
+        "id": "audit_b02.scenario_log",
+        "type": "audit_table"
+      },
+      {
+        "id": "work_b02.scenario_outputs",
+        "type": "intermediate_family"
+      },
+      {
+        "id": "work_b02.union_probe",
+        "type": "intermediate_table"
+      }
+    ],
+    "edges": [
+      {
+        "from": "raw_b02.transactions",
+        "to": "work_b02.stage1",
+        "relationship": "reads",
+        "via": "b02_stage1.sql"
+      },
+      {
+        "from": "raw_b02.customer_history",
+        "to": "work_b02.stage1",
+        "relationship": "reads",
+        "via": "b02_stage1.sql"
+      },
+      {
+        "from": "ref_b02.risk_rules",
+        "to": "work_b02.stage2",
+        "relationship": "reads",
+        "via": "b02_stage2.sql"
+      },
+      {
+        "from": "work_b02.stage1",
+        "to": "work_b02.stage2",
+        "relationship": "reads",
+        "via": "b02_stage2.sql"
+      },
+      {
+        "from": "raw_b02.fx_rates",
+        "to": "work_b02.stage3",
+        "relationship": "reads",
+        "via": "b02_stage3.sas"
+      },
+      {
+        "from": "raw_b02.adjustments",
+        "to": "work_b02.stage3",
+        "relationship": "conditional_read",
+        "via": "b02_stage3.sas"
+      },
+      {
+        "from": "work_b02.stage2",
+        "to": "work_b02.stage3",
+        "relationship": "reads",
+        "via": "b02_stage3.sas"
+      },
+      {
+        "from": "raw_b02.account_status",
+        "to": "work_b02.scenario_outputs",
+        "relationship": "reads",
+        "via": "scenario blocks in all files"
+      },
+      {
+        "from": "raw_b02.chargebacks",
+        "to": "work_b02.union_probe",
+        "relationship": "reads",
+        "via": "union probe"
+      },
+      {
+        "from": "work_b02.stage3",
+        "to": "mart_b02.customer_risk_daily",
+        "relationship": "writes",
+        "via": "b02_stage3.sas"
+      },
+      {
+        "from": "mart_b02.customer_risk_daily",
+        "to": "audit_b02.lineage_run",
+        "relationship": "read_for_audit",
+        "via": "b02_stage3.sas"
+      }
+    ],
+    "sinks": [
+      {
+        "id": "mart_b02.customer_risk_daily",
+        "kind": "database_table"
+      }
+    ],
+    "high_risk_semantics": [
+      "recursive CTE and CTE shadowing",
+      "DISTINCT ON and ROW_NUMBER deduplication",
+      "effective-dated joins with nullable end dates",
+      "JSON extraction and COALESCE",
+      "correlated EXISTS and scalar subquery",
+      "UNION and UNION ALL branch lineage",
+      "self-join and LATERAL subquery",
+      "dynamic SQL string that is returned but not executed",
+      "runtime-generated SQL executed via pandas read_sql",
+      "SAS macro-generated dataset names",
+      "SAS hash lookup and multiple DATA step inputs",
+      "PROC SQL and PROC IMPORT dependencies",
+      "conditional source read controlled by include_adjustments",
+      "multiple independent database/file sinks",
+      "audit table reads from final output",
+      "same source object used under multiple aliases",
+      "many executable derived metrics and repeated intermediate materialization",
+      "false-positive decoy names in non-executed strings/comments"
+    ],
+    "oracle_scope_note": "This oracle captures the named canonical core graph and explicitly listed adversarial probes. Generated scenario/metric intermediates are numerous; they are catalogued by naming convention and should be compared after canonical normalization. Runtime-conditional reads should be represented as conditional edges, not unconditional edges.",
+    "canonical_expected_tree": {
+      "mart_b02.customer_risk_daily": {
+        "direct_dependencies": [
+          "work_b02.stage3"
+        ],
+        "transitive_dependencies": [
+          "work_b02.stage2",
+          "work_b02.stage1",
+          "raw_b02.transactions",
+          "raw_b02.customer_history",
+          "ref_b02.risk_rules",
+          "raw_b02.fx_rates"
+        ],
+        "conditional_dependencies": [
+          "raw_b02.adjustments"
+        ]
+      },
+      "work_b02.stage2": {
+        "direct_dependencies": [
+          "work_b02.stage1",
+          "ref_b02.risk_rules"
+        ],
+        "transitive_dependencies": [
+          "raw_b02.transactions",
+          "raw_b02.customer_history"
+        ]
+      },
+      "work_b02.stage1": {
+        "direct_dependencies": [
+          "raw_b02.transactions",
+          "raw_b02.customer_history"
+        ]
+      }
+    }
+  },
+  "03_python_sas_sas": {
+    "batch": "03_python_sas_sas",
+    "language_combination": [
+      "Python",
+      "SAS",
+      "SAS"
+    ],
+    "files": [
+      {
+        "file": "b03_stage1.py",
+        "language": "Python",
+        "stage": 1,
+        "physical_lines": 611,
+        "comment_padding": false
+      },
+      {
+        "file": "b03_stage2.sas",
+        "language": "SAS",
+        "stage": 2,
+        "physical_lines": 594,
+        "comment_padding": false
+      },
+      {
+        "file": "b03_stage3.sas",
+        "language": "SAS",
+        "stage": 3,
+        "physical_lines": 594,
+        "comment_padding": false
+      }
+    ],
+    "nodes": [
+      {
+        "id": "raw_b03.transactions",
+        "type": "source_table"
+      },
+      {
+        "id": "raw_b03.customer_history",
+        "type": "source_table"
+      },
+      {
+        "id": "ref_b03.risk_rules",
+        "type": "source_table"
+      },
+      {
+        "id": "raw_b03.fx_rates",
+        "type": "source_table"
+      },
+      {
+        "id": "raw_b03.adjustments",
+        "type": "source_table"
+      },
+      {
+        "id": "raw_b03.account_status",
+        "type": "source_table"
+      },
+      {
+        "id": "raw_b03.chargebacks",
+        "type": "source_table"
+      },
+      {
+        "id": "work_b03.stage1",
+        "type": "intermediate_table"
+      },
+      {
+        "id": "work_b03.stage2",
+        "type": "intermediate_table"
+      },
+      {
+        "id": "work_b03.stage3",
+        "type": "intermediate_table"
+      },
+      {
+        "id": "mart_b03.customer_risk_daily",
+        "type": "final_table"
+      },
+      {
+        "id": "audit_b03.lineage_run",
+        "type": "audit_table"
+      },
+      {
+        "id": "audit_b03.scenario_log",
+        "type": "audit_table"
+      },
+      {
+        "id": "work_b03.scenario_outputs",
+        "type": "intermediate_family"
+      },
+      {
+        "id": "work_b03.union_probe",
+        "type": "intermediate_table"
+      }
+    ],
+    "edges": [
+      {
+        "from": "raw_b03.transactions",
+        "to": "work_b03.stage1",
+        "relationship": "reads",
+        "via": "b03_stage1.py"
+      },
+      {
+        "from": "raw_b03.customer_history",
+        "to": "work_b03.stage1",
+        "relationship": "reads",
+        "via": "b03_stage1.py"
+      },
+      {
+        "from": "ref_b03.risk_rules",
+        "to": "work_b03.stage2",
+        "relationship": "reads",
+        "via": "b03_stage2.sas"
+      },
+      {
+        "from": "work_b03.stage1",
+        "to": "work_b03.stage2",
+        "relationship": "reads",
+        "via": "b03_stage2.sas"
+      },
+      {
+        "from": "raw_b03.fx_rates",
+        "to": "work_b03.stage3",
+        "relationship": "reads",
+        "via": "b03_stage3.sas"
+      },
+      {
+        "from": "raw_b03.adjustments",
+        "to": "work_b03.stage3",
+        "relationship": "conditional_read",
+        "via": "b03_stage3.sas"
+      },
+      {
+        "from": "work_b03.stage2",
+        "to": "work_b03.stage3",
+        "relationship": "reads",
+        "via": "b03_stage3.sas"
+      },
+      {
+        "from": "raw_b03.account_status",
+        "to": "work_b03.scenario_outputs",
+        "relationship": "reads",
+        "via": "scenario blocks in all files"
+      },
+      {
+        "from": "raw_b03.chargebacks",
+        "to": "work_b03.union_probe",
+        "relationship": "reads",
+        "via": "union probe"
+      },
+      {
+        "from": "work_b03.stage3",
+        "to": "mart_b03.customer_risk_daily",
+        "relationship": "writes",
+        "via": "b03_stage3.sas"
+      },
+      {
+        "from": "mart_b03.customer_risk_daily",
+        "to": "audit_b03.lineage_run",
+        "relationship": "read_for_audit",
+        "via": "b03_stage3.sas"
+      }
+    ],
+    "sinks": [
+      {
+        "id": "mart_b03.customer_risk_daily",
+        "kind": "database_table"
+      }
+    ],
+    "high_risk_semantics": [
+      "recursive CTE and CTE shadowing",
+      "DISTINCT ON and ROW_NUMBER deduplication",
+      "effective-dated joins with nullable end dates",
+      "JSON extraction and COALESCE",
+      "correlated EXISTS and scalar subquery",
+      "UNION and UNION ALL branch lineage",
+      "self-join and LATERAL subquery",
+      "dynamic SQL string that is returned but not executed",
+      "runtime-generated SQL executed via pandas read_sql",
+      "SAS macro-generated dataset names",
+      "SAS hash lookup and multiple DATA step inputs",
+      "PROC SQL and PROC IMPORT dependencies",
+      "conditional source read controlled by include_adjustments",
+      "multiple independent database/file sinks",
+      "audit table reads from final output",
+      "same source object used under multiple aliases",
+      "many executable derived metrics and repeated intermediate materialization",
+      "false-positive decoy names in non-executed strings/comments"
+    ],
+    "oracle_scope_note": "This oracle captures the named canonical core graph and explicitly listed adversarial probes. Generated scenario/metric intermediates are numerous; they are catalogued by naming convention and should be compared after canonical normalization. Runtime-conditional reads should be represented as conditional edges, not unconditional edges.",
+    "canonical_expected_tree": {
+      "mart_b03.customer_risk_daily": {
+        "direct_dependencies": [
+          "work_b03.stage3"
+        ],
+        "transitive_dependencies": [
+          "work_b03.stage2",
+          "work_b03.stage1",
+          "raw_b03.transactions",
+          "raw_b03.customer_history",
+          "ref_b03.risk_rules",
+          "raw_b03.fx_rates"
+        ],
+        "conditional_dependencies": [
+          "raw_b03.adjustments"
+        ]
+      },
+      "work_b03.stage2": {
+        "direct_dependencies": [
+          "work_b03.stage1",
+          "ref_b03.risk_rules"
+        ],
+        "transitive_dependencies": [
+          "raw_b03.transactions",
+          "raw_b03.customer_history"
+        ]
+      },
+      "work_b03.stage1": {
+        "direct_dependencies": [
+          "raw_b03.transactions",
+          "raw_b03.customer_history"
+        ]
+      }
+    }
+  },
+  "04_sas_python_sql": {
+    "batch": "04_sas_python_sql",
+    "language_combination": [
+      "SAS",
+      "Python",
+      "SQL"
+    ],
+    "files": [
+      {
+        "file": "b04_stage1.sas",
+        "language": "SAS",
+        "stage": 1,
+        "physical_lines": 594,
+        "comment_padding": false
+      },
+      {
+        "file": "b04_stage2.py",
+        "language": "Python",
+        "stage": 2,
+        "physical_lines": 611,
+        "comment_padding": false
+      },
+      {
+        "file": "b04_stage3.sql",
+        "language": "SQL",
+        "stage": 3,
+        "physical_lines": 608,
+        "comment_padding": false
+      }
+    ],
+    "nodes": [
+      {
+        "id": "raw_b04.transactions",
+        "type": "source_table"
+      },
+      {
+        "id": "raw_b04.customer_history",
+        "type": "source_table"
+      },
+      {
+        "id": "ref_b04.risk_rules",
+        "type": "source_table"
+      },
+      {
+        "id": "raw_b04.fx_rates",
+        "type": "source_table"
+      },
+      {
+        "id": "raw_b04.adjustments",
+        "type": "source_table"
+      },
+      {
+        "id": "raw_b04.account_status",
+        "type": "source_table"
+      },
+      {
+        "id": "raw_b04.chargebacks",
+        "type": "source_table"
+      },
+      {
+        "id": "work_b04.stage1",
+        "type": "intermediate_table"
+      },
+      {
+        "id": "work_b04.stage2",
+        "type": "intermediate_table"
+      },
+      {
+        "id": "work_b04.stage3",
+        "type": "intermediate_table"
+      },
+      {
+        "id": "mart_b04.customer_risk_daily",
+        "type": "final_table"
+      },
+      {
+        "id": "audit_b04.lineage_run",
+        "type": "audit_table"
+      },
+      {
+        "id": "audit_b04.scenario_log",
+        "type": "audit_table"
+      },
+      {
+        "id": "work_b04.scenario_outputs",
+        "type": "intermediate_family"
+      },
+      {
+        "id": "work_b04.union_probe",
+        "type": "intermediate_table"
+      }
+    ],
+    "edges": [
+      {
+        "from": "raw_b04.transactions",
+        "to": "work_b04.stage1",
+        "relationship": "reads",
+        "via": "b04_stage1.sas"
+      },
+      {
+        "from": "raw_b04.customer_history",
+        "to": "work_b04.stage1",
+        "relationship": "reads",
+        "via": "b04_stage1.sas"
+      },
+      {
+        "from": "ref_b04.risk_rules",
+        "to": "work_b04.stage2",
+        "relationship": "reads",
+        "via": "b04_stage2.py"
+      },
+      {
+        "from": "work_b04.stage1",
+        "to": "work_b04.stage2",
+        "relationship": "reads",
+        "via": "b04_stage2.py"
+      },
+      {
+        "from": "raw_b04.fx_rates",
+        "to": "work_b04.stage3",
+        "relationship": "reads",
+        "via": "b04_stage3.sql"
+      },
+      {
+        "from": "raw_b04.adjustments",
+        "to": "work_b04.stage3",
+        "relationship": "conditional_read",
+        "via": "b04_stage3.sql"
+      },
+      {
+        "from": "work_b04.stage2",
+        "to": "work_b04.stage3",
+        "relationship": "reads",
+        "via": "b04_stage3.sql"
+      },
+      {
+        "from": "raw_b04.account_status",
+        "to": "work_b04.scenario_outputs",
+        "relationship": "reads",
+        "via": "scenario blocks in all files"
+      },
+      {
+        "from": "raw_b04.chargebacks",
+        "to": "work_b04.union_probe",
+        "relationship": "reads",
+        "via": "union probe"
+      },
+      {
+        "from": "work_b04.stage3",
+        "to": "mart_b04.customer_risk_daily",
+        "relationship": "writes",
+        "via": "b04_stage3.sql"
+      },
+      {
+        "from": "mart_b04.customer_risk_daily",
+        "to": "audit_b04.lineage_run",
+        "relationship": "read_for_audit",
+        "via": "b04_stage3.sql"
+      }
+    ],
+    "sinks": [
+      {
+        "id": "mart_b04.customer_risk_daily",
+        "kind": "database_table"
+      }
+    ],
+    "high_risk_semantics": [
+      "recursive CTE and CTE shadowing",
+      "DISTINCT ON and ROW_NUMBER deduplication",
+      "effective-dated joins with nullable end dates",
+      "JSON extraction and COALESCE",
+      "correlated EXISTS and scalar subquery",
+      "UNION and UNION ALL branch lineage",
+      "self-join and LATERAL subquery",
+      "dynamic SQL string that is returned but not executed",
+      "runtime-generated SQL executed via pandas read_sql",
+      "SAS macro-generated dataset names",
+      "SAS hash lookup and multiple DATA step inputs",
+      "PROC SQL and PROC IMPORT dependencies",
+      "conditional source read controlled by include_adjustments",
+      "multiple independent database/file sinks",
+      "audit table reads from final output",
+      "same source object used under multiple aliases",
+      "many executable derived metrics and repeated intermediate materialization",
+      "false-positive decoy names in non-executed strings/comments"
+    ],
+    "oracle_scope_note": "This oracle captures the named canonical core graph and explicitly listed adversarial probes. Generated scenario/metric intermediates are numerous; they are catalogued by naming convention and should be compared after canonical normalization. Runtime-conditional reads should be represented as conditional edges, not unconditional edges.",
+    "canonical_expected_tree": {
+      "mart_b04.customer_risk_daily": {
+        "direct_dependencies": [
+          "work_b04.stage3"
+        ],
+        "transitive_dependencies": [
+          "work_b04.stage2",
+          "work_b04.stage1",
+          "raw_b04.transactions",
+          "raw_b04.customer_history",
+          "ref_b04.risk_rules",
+          "raw_b04.fx_rates"
+        ],
+        "conditional_dependencies": [
+          "raw_b04.adjustments"
+        ]
+      },
+      "work_b04.stage2": {
+        "direct_dependencies": [
+          "work_b04.stage1",
+          "ref_b04.risk_rules"
+        ],
+        "transitive_dependencies": [
+          "raw_b04.transactions",
+          "raw_b04.customer_history"
+        ]
+      },
+      "work_b04.stage1": {
+        "direct_dependencies": [
+          "raw_b04.transactions",
+          "raw_b04.customer_history"
+        ]
+      }
+    }
+  },
+  "05_sql_python_python": {
+    "batch": "05_sql_python_python",
+    "language_combination": [
+      "SQL",
+      "Python",
+      "Python"
+    ],
+    "files": [
+      {
+        "file": "b05_stage1.sql",
+        "language": "SQL",
+        "stage": 1,
+        "physical_lines": 608,
+        "comment_padding": false
+      },
+      {
+        "file": "b05_stage2.py",
+        "language": "Python",
+        "stage": 2,
+        "physical_lines": 611,
+        "comment_padding": false
+      },
+      {
+        "file": "b05_stage3.py",
+        "language": "Python",
+        "stage": 3,
+        "physical_lines": 611,
+        "comment_padding": false
+      }
+    ],
+    "nodes": [
+      {
+        "id": "raw_b05.transactions",
+        "type": "source_table"
+      },
+      {
+        "id": "raw_b05.customer_history",
+        "type": "source_table"
+      },
+      {
+        "id": "ref_b05.risk_rules",
+        "type": "source_table"
+      },
+      {
+        "id": "raw_b05.fx_rates",
+        "type": "source_table"
+      },
+      {
+        "id": "raw_b05.adjustments",
+        "type": "source_table"
+      },
+      {
+        "id": "raw_b05.account_status",
+        "type": "source_table"
+      },
+      {
+        "id": "raw_b05.chargebacks",
+        "type": "source_table"
+      },
+      {
+        "id": "work_b05.stage1",
+        "type": "intermediate_table"
+      },
+      {
+        "id": "work_b05.stage2",
+        "type": "intermediate_table"
+      },
+      {
+        "id": "work_b05.stage3",
+        "type": "intermediate_table"
+      },
+      {
+        "id": "mart_b05.customer_risk_daily",
+        "type": "final_table"
+      },
+      {
+        "id": "audit_b05.lineage_run",
+        "type": "audit_table"
+      },
+      {
+        "id": "audit_b05.scenario_log",
+        "type": "audit_table"
+      },
+      {
+        "id": "work_b05.scenario_outputs",
+        "type": "intermediate_family"
+      },
+      {
+        "id": "work_b05.union_probe",
+        "type": "intermediate_table"
+      }
+    ],
+    "edges": [
+      {
+        "from": "raw_b05.transactions",
+        "to": "work_b05.stage1",
+        "relationship": "reads",
+        "via": "b05_stage1.sql"
+      },
+      {
+        "from": "raw_b05.customer_history",
+        "to": "work_b05.stage1",
+        "relationship": "reads",
+        "via": "b05_stage1.sql"
+      },
+      {
+        "from": "ref_b05.risk_rules",
+        "to": "work_b05.stage2",
+        "relationship": "reads",
+        "via": "b05_stage2.py"
+      },
+      {
+        "from": "work_b05.stage1",
+        "to": "work_b05.stage2",
+        "relationship": "reads",
+        "via": "b05_stage2.py"
+      },
+      {
+        "from": "raw_b05.fx_rates",
+        "to": "work_b05.stage3",
+        "relationship": "reads",
+        "via": "b05_stage3.py"
+      },
+      {
+        "from": "raw_b05.adjustments",
+        "to": "work_b05.stage3",
+        "relationship": "conditional_read",
+        "via": "b05_stage3.py"
+      },
+      {
+        "from": "work_b05.stage2",
+        "to": "work_b05.stage3",
+        "relationship": "reads",
+        "via": "b05_stage3.py"
+      },
+      {
+        "from": "raw_b05.account_status",
+        "to": "work_b05.scenario_outputs",
+        "relationship": "reads",
+        "via": "scenario blocks in all files"
+      },
+      {
+        "from": "raw_b05.chargebacks",
+        "to": "work_b05.union_probe",
+        "relationship": "reads",
+        "via": "union probe"
+      },
+      {
+        "from": "work_b05.stage3",
+        "to": "mart_b05.customer_risk_daily",
+        "relationship": "writes",
+        "via": "b05_stage3.py"
+      },
+      {
+        "from": "mart_b05.customer_risk_daily",
+        "to": "audit_b05.lineage_run",
+        "relationship": "read_for_audit",
+        "via": "b05_stage3.py"
+      }
+    ],
+    "sinks": [
+      {
+        "id": "mart_b05.customer_risk_daily",
+        "kind": "database_table"
+      },
+      {
+        "id": "parquet/b05_customer_risk_daily.parquet",
+        "kind": "parquet_file"
+      },
+      {
+        "id": "audit_b05.lineage_run",
+        "kind": "database_table"
+      }
+    ],
+    "high_risk_semantics": [
+      "recursive CTE and CTE shadowing",
+      "DISTINCT ON and ROW_NUMBER deduplication",
+      "effective-dated joins with nullable end dates",
+      "JSON extraction and COALESCE",
+      "correlated EXISTS and scalar subquery",
+      "UNION and UNION ALL branch lineage",
+      "self-join and LATERAL subquery",
+      "dynamic SQL string that is returned but not executed",
+      "runtime-generated SQL executed via pandas read_sql",
+      "SAS macro-generated dataset names",
+      "SAS hash lookup and multiple DATA step inputs",
+      "PROC SQL and PROC IMPORT dependencies",
+      "conditional source read controlled by include_adjustments",
+      "multiple independent database/file sinks",
+      "audit table reads from final output",
+      "same source object used under multiple aliases",
+      "many executable derived metrics and repeated intermediate materialization",
+      "false-positive decoy names in non-executed strings/comments"
+    ],
+    "oracle_scope_note": "This oracle captures the named canonical core graph and explicitly listed adversarial probes. Generated scenario/metric intermediates are numerous; they are catalogued by naming convention and should be compared after canonical normalization. Runtime-conditional reads should be represented as conditional edges, not unconditional edges.",
+    "canonical_expected_tree": {
+      "mart_b05.customer_risk_daily": {
+        "direct_dependencies": [
+          "work_b05.stage3"
+        ],
+        "transitive_dependencies": [
+          "work_b05.stage2",
+          "work_b05.stage1",
+          "raw_b05.transactions",
+          "raw_b05.customer_history",
+          "ref_b05.risk_rules",
+          "raw_b05.fx_rates"
+        ],
+        "conditional_dependencies": [
+          "raw_b05.adjustments"
+        ]
+      },
+      "work_b05.stage2": {
+        "direct_dependencies": [
+          "work_b05.stage1",
+          "ref_b05.risk_rules"
+        ],
+        "transitive_dependencies": [
+          "raw_b05.transactions",
+          "raw_b05.customer_history"
+        ]
+      },
+      "work_b05.stage1": {
+        "direct_dependencies": [
+          "raw_b05.transactions",
+          "raw_b05.customer_history"
+        ]
+      }
+    }
+  },
+  "06_sas_sql_sql": {
+    "batch": "06_sas_sql_sql",
+    "language_combination": [
+      "SAS",
+      "SQL",
+      "SQL"
+    ],
+    "files": [
+      {
+        "file": "b06_stage1.sas",
+        "language": "SAS",
+        "stage": 1,
+        "physical_lines": 594,
+        "comment_padding": false
+      },
+      {
+        "file": "b06_stage2.sql",
+        "language": "SQL",
+        "stage": 2,
+        "physical_lines": 608,
+        "comment_padding": false
+      },
+      {
+        "file": "b06_stage3.sql",
+        "language": "SQL",
+        "stage": 3,
+        "physical_lines": 608,
+        "comment_padding": false
+      }
+    ],
+    "nodes": [
+      {
+        "id": "raw_b06.transactions",
+        "type": "source_table"
+      },
+      {
+        "id": "raw_b06.customer_history",
+        "type": "source_table"
+      },
+      {
+        "id": "ref_b06.risk_rules",
+        "type": "source_table"
+      },
+      {
+        "id": "raw_b06.fx_rates",
+        "type": "source_table"
+      },
+      {
+        "id": "raw_b06.adjustments",
+        "type": "source_table"
+      },
+      {
+        "id": "raw_b06.account_status",
+        "type": "source_table"
+      },
+      {
+        "id": "raw_b06.chargebacks",
+        "type": "source_table"
+      },
+      {
+        "id": "work_b06.stage1",
+        "type": "intermediate_table"
+      },
+      {
+        "id": "work_b06.stage2",
+        "type": "intermediate_table"
+      },
+      {
+        "id": "work_b06.stage3",
+        "type": "intermediate_table"
+      },
+      {
+        "id": "mart_b06.customer_risk_daily",
+        "type": "final_table"
+      },
+      {
+        "id": "audit_b06.lineage_run",
+        "type": "audit_table"
+      },
+      {
+        "id": "audit_b06.scenario_log",
+        "type": "audit_table"
+      },
+      {
+        "id": "work_b06.scenario_outputs",
+        "type": "intermediate_family"
+      },
+      {
+        "id": "work_b06.union_probe",
+        "type": "intermediate_table"
+      }
+    ],
+    "edges": [
+      {
+        "from": "raw_b06.transactions",
+        "to": "work_b06.stage1",
+        "relationship": "reads",
+        "via": "b06_stage1.sas"
+      },
+      {
+        "from": "raw_b06.customer_history",
+        "to": "work_b06.stage1",
+        "relationship": "reads",
+        "via": "b06_stage1.sas"
+      },
+      {
+        "from": "ref_b06.risk_rules",
+        "to": "work_b06.stage2",
+        "relationship": "reads",
+        "via": "b06_stage2.sql"
+      },
+      {
+        "from": "work_b06.stage1",
+        "to": "work_b06.stage2",
+        "relationship": "reads",
+        "via": "b06_stage2.sql"
+      },
+      {
+        "from": "raw_b06.fx_rates",
+        "to": "work_b06.stage3",
+        "relationship": "reads",
+        "via": "b06_stage3.sql"
+      },
+      {
+        "from": "raw_b06.adjustments",
+        "to": "work_b06.stage3",
+        "relationship": "conditional_read",
+        "via": "b06_stage3.sql"
+      },
+      {
+        "from": "work_b06.stage2",
+        "to": "work_b06.stage3",
+        "relationship": "reads",
+        "via": "b06_stage3.sql"
+      },
+      {
+        "from": "raw_b06.account_status",
+        "to": "work_b06.scenario_outputs",
+        "relationship": "reads",
+        "via": "scenario blocks in all files"
+      },
+      {
+        "from": "raw_b06.chargebacks",
+        "to": "work_b06.union_probe",
+        "relationship": "reads",
+        "via": "union probe"
+      },
+      {
+        "from": "work_b06.stage3",
+        "to": "mart_b06.customer_risk_daily",
+        "relationship": "writes",
+        "via": "b06_stage3.sql"
+      },
+      {
+        "from": "mart_b06.customer_risk_daily",
+        "to": "audit_b06.lineage_run",
+        "relationship": "read_for_audit",
+        "via": "b06_stage3.sql"
+      }
+    ],
+    "sinks": [
+      {
+        "id": "mart_b06.customer_risk_daily",
+        "kind": "database_table"
+      }
+    ],
+    "high_risk_semantics": [
+      "recursive CTE and CTE shadowing",
+      "DISTINCT ON and ROW_NUMBER deduplication",
+      "effective-dated joins with nullable end dates",
+      "JSON extraction and COALESCE",
+      "correlated EXISTS and scalar subquery",
+      "UNION and UNION ALL branch lineage",
+      "self-join and LATERAL subquery",
+      "dynamic SQL string that is returned but not executed",
+      "runtime-generated SQL executed via pandas read_sql",
+      "SAS macro-generated dataset names",
+      "SAS hash lookup and multiple DATA step inputs",
+      "PROC SQL and PROC IMPORT dependencies",
+      "conditional source read controlled by include_adjustments",
+      "multiple independent database/file sinks",
+      "audit table reads from final output",
+      "same source object used under multiple aliases",
+      "many executable derived metrics and repeated intermediate materialization",
+      "false-positive decoy names in non-executed strings/comments"
+    ],
+    "oracle_scope_note": "This oracle captures the named canonical core graph and explicitly listed adversarial probes. Generated scenario/metric intermediates are numerous; they are catalogued by naming convention and should be compared after canonical normalization. Runtime-conditional reads should be represented as conditional edges, not unconditional edges.",
+    "canonical_expected_tree": {
+      "mart_b06.customer_risk_daily": {
+        "direct_dependencies": [
+          "work_b06.stage3"
+        ],
+        "transitive_dependencies": [
+          "work_b06.stage2",
+          "work_b06.stage1",
+          "raw_b06.transactions",
+          "raw_b06.customer_history",
+          "ref_b06.risk_rules",
+          "raw_b06.fx_rates"
+        ],
+        "conditional_dependencies": [
+          "raw_b06.adjustments"
+        ]
+      },
+      "work_b06.stage2": {
+        "direct_dependencies": [
+          "work_b06.stage1",
+          "ref_b06.risk_rules"
+        ],
+        "transitive_dependencies": [
+          "raw_b06.transactions",
+          "raw_b06.customer_history"
+        ]
+      },
+      "work_b06.stage1": {
+        "direct_dependencies": [
+          "raw_b06.transactions",
+          "raw_b06.customer_history"
+        ]
+      }
+    }
+  },
+  "07_python_sql_sas": {
+    "batch": "07_python_sql_sas",
+    "language_combination": [
+      "Python",
+      "SQL",
+      "SAS"
+    ],
+    "files": [
+      {
+        "file": "b07_stage1.py",
+        "language": "Python",
+        "stage": 1,
+        "physical_lines": 611,
+        "comment_padding": false
+      },
+      {
+        "file": "b07_stage2.sql",
+        "language": "SQL",
+        "stage": 2,
+        "physical_lines": 608,
+        "comment_padding": false
+      },
+      {
+        "file": "b07_stage3.sas",
+        "language": "SAS",
+        "stage": 3,
+        "physical_lines": 594,
+        "comment_padding": false
+      }
+    ],
+    "nodes": [
+      {
+        "id": "raw_b07.transactions",
+        "type": "source_table"
+      },
+      {
+        "id": "raw_b07.customer_history",
+        "type": "source_table"
+      },
+      {
+        "id": "ref_b07.risk_rules",
+        "type": "source_table"
+      },
+      {
+        "id": "raw_b07.fx_rates",
+        "type": "source_table"
+      },
+      {
+        "id": "raw_b07.adjustments",
+        "type": "source_table"
+      },
+      {
+        "id": "raw_b07.account_status",
+        "type": "source_table"
+      },
+      {
+        "id": "raw_b07.chargebacks",
+        "type": "source_table"
+      },
+      {
+        "id": "work_b07.stage1",
+        "type": "intermediate_table"
+      },
+      {
+        "id": "work_b07.stage2",
+        "type": "intermediate_table"
+      },
+      {
+        "id": "work_b07.stage3",
+        "type": "intermediate_table"
+      },
+      {
+        "id": "mart_b07.customer_risk_daily",
+        "type": "final_table"
+      },
+      {
+        "id": "audit_b07.lineage_run",
+        "type": "audit_table"
+      },
+      {
+        "id": "audit_b07.scenario_log",
+        "type": "audit_table"
+      },
+      {
+        "id": "work_b07.scenario_outputs",
+        "type": "intermediate_family"
+      },
+      {
+        "id": "work_b07.union_probe",
+        "type": "intermediate_table"
+      }
+    ],
+    "edges": [
+      {
+        "from": "raw_b07.transactions",
+        "to": "work_b07.stage1",
+        "relationship": "reads",
+        "via": "b07_stage1.py"
+      },
+      {
+        "from": "raw_b07.customer_history",
+        "to": "work_b07.stage1",
+        "relationship": "reads",
+        "via": "b07_stage1.py"
+      },
+      {
+        "from": "ref_b07.risk_rules",
+        "to": "work_b07.stage2",
+        "relationship": "reads",
+        "via": "b07_stage2.sql"
+      },
+      {
+        "from": "work_b07.stage1",
+        "to": "work_b07.stage2",
+        "relationship": "reads",
+        "via": "b07_stage2.sql"
+      },
+      {
+        "from": "raw_b07.fx_rates",
+        "to": "work_b07.stage3",
+        "relationship": "reads",
+        "via": "b07_stage3.sas"
+      },
+      {
+        "from": "raw_b07.adjustments",
+        "to": "work_b07.stage3",
+        "relationship": "conditional_read",
+        "via": "b07_stage3.sas"
+      },
+      {
+        "from": "work_b07.stage2",
+        "to": "work_b07.stage3",
+        "relationship": "reads",
+        "via": "b07_stage3.sas"
+      },
+      {
+        "from": "raw_b07.account_status",
+        "to": "work_b07.scenario_outputs",
+        "relationship": "reads",
+        "via": "scenario blocks in all files"
+      },
+      {
+        "from": "raw_b07.chargebacks",
+        "to": "work_b07.union_probe",
+        "relationship": "reads",
+        "via": "union probe"
+      },
+      {
+        "from": "work_b07.stage3",
+        "to": "mart_b07.customer_risk_daily",
+        "relationship": "writes",
+        "via": "b07_stage3.sas"
+      },
+      {
+        "from": "mart_b07.customer_risk_daily",
+        "to": "audit_b07.lineage_run",
+        "relationship": "read_for_audit",
+        "via": "b07_stage3.sas"
+      }
+    ],
+    "sinks": [
+      {
+        "id": "mart_b07.customer_risk_daily",
+        "kind": "database_table"
+      }
+    ],
+    "high_risk_semantics": [
+      "recursive CTE and CTE shadowing",
+      "DISTINCT ON and ROW_NUMBER deduplication",
+      "effective-dated joins with nullable end dates",
+      "JSON extraction and COALESCE",
+      "correlated EXISTS and scalar subquery",
+      "UNION and UNION ALL branch lineage",
+      "self-join and LATERAL subquery",
+      "dynamic SQL string that is returned but not executed",
+      "runtime-generated SQL executed via pandas read_sql",
+      "SAS macro-generated dataset names",
+      "SAS hash lookup and multiple DATA step inputs",
+      "PROC SQL and PROC IMPORT dependencies",
+      "conditional source read controlled by include_adjustments",
+      "multiple independent database/file sinks",
+      "audit table reads from final output",
+      "same source object used under multiple aliases",
+      "many executable derived metrics and repeated intermediate materialization",
+      "false-positive decoy names in non-executed strings/comments"
+    ],
+    "oracle_scope_note": "This oracle captures the named canonical core graph and explicitly listed adversarial probes. Generated scenario/metric intermediates are numerous; they are catalogued by naming convention and should be compared after canonical normalization. Runtime-conditional reads should be represented as conditional edges, not unconditional edges.",
+    "canonical_expected_tree": {
+      "mart_b07.customer_risk_daily": {
+        "direct_dependencies": [
+          "work_b07.stage3"
+        ],
+        "transitive_dependencies": [
+          "work_b07.stage2",
+          "work_b07.stage1",
+          "raw_b07.transactions",
+          "raw_b07.customer_history",
+          "ref_b07.risk_rules",
+          "raw_b07.fx_rates"
+        ],
+        "conditional_dependencies": [
+          "raw_b07.adjustments"
+        ]
+      },
+      "work_b07.stage2": {
+        "direct_dependencies": [
+          "work_b07.stage1",
+          "ref_b07.risk_rules"
+        ],
+        "transitive_dependencies": [
+          "raw_b07.transactions",
+          "raw_b07.customer_history"
+        ]
+      },
+      "work_b07.stage1": {
+        "direct_dependencies": [
+          "raw_b07.transactions",
+          "raw_b07.customer_history"
+        ]
+      }
+    }
+  },
+  "08_sql_sas_sql": {
+    "batch": "08_sql_sas_sql",
+    "language_combination": [
+      "SQL",
+      "SAS",
+      "SQL"
+    ],
+    "files": [
+      {
+        "file": "b08_stage1.sql",
+        "language": "SQL",
+        "stage": 1,
+        "physical_lines": 608,
+        "comment_padding": false
+      },
+      {
+        "file": "b08_stage2.sas",
+        "language": "SAS",
+        "stage": 2,
+        "physical_lines": 594,
+        "comment_padding": false
+      },
+      {
+        "file": "b08_stage3.sql",
+        "language": "SQL",
+        "stage": 3,
+        "physical_lines": 608,
+        "comment_padding": false
+      }
+    ],
+    "nodes": [
+      {
+        "id": "raw_b08.transactions",
+        "type": "source_table"
+      },
+      {
+        "id": "raw_b08.customer_history",
+        "type": "source_table"
+      },
+      {
+        "id": "ref_b08.risk_rules",
+        "type": "source_table"
+      },
+      {
+        "id": "raw_b08.fx_rates",
+        "type": "source_table"
+      },
+      {
+        "id": "raw_b08.adjustments",
+        "type": "source_table"
+      },
+      {
+        "id": "raw_b08.account_status",
+        "type": "source_table"
+      },
+      {
+        "id": "raw_b08.chargebacks",
+        "type": "source_table"
+      },
+      {
+        "id": "work_b08.stage1",
+        "type": "intermediate_table"
+      },
+      {
+        "id": "work_b08.stage2",
+        "type": "intermediate_table"
+      },
+      {
+        "id": "work_b08.stage3",
+        "type": "intermediate_table"
+      },
+      {
+        "id": "mart_b08.customer_risk_daily",
+        "type": "final_table"
+      },
+      {
+        "id": "audit_b08.lineage_run",
+        "type": "audit_table"
+      },
+      {
+        "id": "audit_b08.scenario_log",
+        "type": "audit_table"
+      },
+      {
+        "id": "work_b08.scenario_outputs",
+        "type": "intermediate_family"
+      },
+      {
+        "id": "work_b08.union_probe",
+        "type": "intermediate_table"
+      }
+    ],
+    "edges": [
+      {
+        "from": "raw_b08.transactions",
+        "to": "work_b08.stage1",
+        "relationship": "reads",
+        "via": "b08_stage1.sql"
+      },
+      {
+        "from": "raw_b08.customer_history",
+        "to": "work_b08.stage1",
+        "relationship": "reads",
+        "via": "b08_stage1.sql"
+      },
+      {
+        "from": "ref_b08.risk_rules",
+        "to": "work_b08.stage2",
+        "relationship": "reads",
+        "via": "b08_stage2.sas"
+      },
+      {
+        "from": "work_b08.stage1",
+        "to": "work_b08.stage2",
+        "relationship": "reads",
+        "via": "b08_stage2.sas"
+      },
+      {
+        "from": "raw_b08.fx_rates",
+        "to": "work_b08.stage3",
+        "relationship": "reads",
+        "via": "b08_stage3.sql"
+      },
+      {
+        "from": "raw_b08.adjustments",
+        "to": "work_b08.stage3",
+        "relationship": "conditional_read",
+        "via": "b08_stage3.sql"
+      },
+      {
+        "from": "work_b08.stage2",
+        "to": "work_b08.stage3",
+        "relationship": "reads",
+        "via": "b08_stage3.sql"
+      },
+      {
+        "from": "raw_b08.account_status",
+        "to": "work_b08.scenario_outputs",
+        "relationship": "reads",
+        "via": "scenario blocks in all files"
+      },
+      {
+        "from": "raw_b08.chargebacks",
+        "to": "work_b08.union_probe",
+        "relationship": "reads",
+        "via": "union probe"
+      },
+      {
+        "from": "work_b08.stage3",
+        "to": "mart_b08.customer_risk_daily",
+        "relationship": "writes",
+        "via": "b08_stage3.sql"
+      },
+      {
+        "from": "mart_b08.customer_risk_daily",
+        "to": "audit_b08.lineage_run",
+        "relationship": "read_for_audit",
+        "via": "b08_stage3.sql"
+      }
+    ],
+    "sinks": [
+      {
+        "id": "mart_b08.customer_risk_daily",
+        "kind": "database_table"
+      }
+    ],
+    "high_risk_semantics": [
+      "recursive CTE and CTE shadowing",
+      "DISTINCT ON and ROW_NUMBER deduplication",
+      "effective-dated joins with nullable end dates",
+      "JSON extraction and COALESCE",
+      "correlated EXISTS and scalar subquery",
+      "UNION and UNION ALL branch lineage",
+      "self-join and LATERAL subquery",
+      "dynamic SQL string that is returned but not executed",
+      "runtime-generated SQL executed via pandas read_sql",
+      "SAS macro-generated dataset names",
+      "SAS hash lookup and multiple DATA step inputs",
+      "PROC SQL and PROC IMPORT dependencies",
+      "conditional source read controlled by include_adjustments",
+      "multiple independent database/file sinks",
+      "audit table reads from final output",
+      "same source object used under multiple aliases",
+      "many executable derived metrics and repeated intermediate materialization",
+      "false-positive decoy names in non-executed strings/comments"
+    ],
+    "oracle_scope_note": "This oracle captures the named canonical core graph and explicitly listed adversarial probes. Generated scenario/metric intermediates are numerous; they are catalogued by naming convention and should be compared after canonical normalization. Runtime-conditional reads should be represented as conditional edges, not unconditional edges.",
+    "canonical_expected_tree": {
+      "mart_b08.customer_risk_daily": {
+        "direct_dependencies": [
+          "work_b08.stage3"
+        ],
+        "transitive_dependencies": [
+          "work_b08.stage2",
+          "work_b08.stage1",
+          "raw_b08.transactions",
+          "raw_b08.customer_history",
+          "ref_b08.risk_rules",
+          "raw_b08.fx_rates"
+        ],
+        "conditional_dependencies": [
+          "raw_b08.adjustments"
+        ]
+      },
+      "work_b08.stage2": {
+        "direct_dependencies": [
+          "work_b08.stage1",
+          "ref_b08.risk_rules"
+        ],
+        "transitive_dependencies": [
+          "raw_b08.transactions",
+          "raw_b08.customer_history"
+        ]
+      },
+      "work_b08.stage1": {
+        "direct_dependencies": [
+          "raw_b08.transactions",
+          "raw_b08.customer_history"
+        ]
+      }
+    }
+  },
+  "09_sas_sas_python": {
+    "batch": "09_sas_sas_python",
+    "language_combination": [
+      "SAS",
+      "SAS",
+      "Python"
+    ],
+    "files": [
+      {
+        "file": "b09_stage1.sas",
+        "language": "SAS",
+        "stage": 1,
+        "physical_lines": 594,
+        "comment_padding": false
+      },
+      {
+        "file": "b09_stage2.sas",
+        "language": "SAS",
+        "stage": 2,
+        "physical_lines": 594,
+        "comment_padding": false
+      },
+      {
+        "file": "b09_stage3.py",
+        "language": "Python",
+        "stage": 3,
+        "physical_lines": 611,
+        "comment_padding": false
+      }
+    ],
+    "nodes": [
+      {
+        "id": "raw_b09.transactions",
+        "type": "source_table"
+      },
+      {
+        "id": "raw_b09.customer_history",
+        "type": "source_table"
+      },
+      {
+        "id": "ref_b09.risk_rules",
+        "type": "source_table"
+      },
+      {
+        "id": "raw_b09.fx_rates",
+        "type": "source_table"
+      },
+      {
+        "id": "raw_b09.adjustments",
+        "type": "source_table"
+      },
+      {
+        "id": "raw_b09.account_status",
+        "type": "source_table"
+      },
+      {
+        "id": "raw_b09.chargebacks",
+        "type": "source_table"
+      },
+      {
+        "id": "work_b09.stage1",
+        "type": "intermediate_table"
+      },
+      {
+        "id": "work_b09.stage2",
+        "type": "intermediate_table"
+      },
+      {
+        "id": "work_b09.stage3",
+        "type": "intermediate_table"
+      },
+      {
+        "id": "mart_b09.customer_risk_daily",
+        "type": "final_table"
+      },
+      {
+        "id": "audit_b09.lineage_run",
+        "type": "audit_table"
+      },
+      {
+        "id": "audit_b09.scenario_log",
+        "type": "audit_table"
+      },
+      {
+        "id": "work_b09.scenario_outputs",
+        "type": "intermediate_family"
+      },
+      {
+        "id": "work_b09.union_probe",
+        "type": "intermediate_table"
+      }
+    ],
+    "edges": [
+      {
+        "from": "raw_b09.transactions",
+        "to": "work_b09.stage1",
+        "relationship": "reads",
+        "via": "b09_stage1.sas"
+      },
+      {
+        "from": "raw_b09.customer_history",
+        "to": "work_b09.stage1",
+        "relationship": "reads",
+        "via": "b09_stage1.sas"
+      },
+      {
+        "from": "ref_b09.risk_rules",
+        "to": "work_b09.stage2",
+        "relationship": "reads",
+        "via": "b09_stage2.sas"
+      },
+      {
+        "from": "work_b09.stage1",
+        "to": "work_b09.stage2",
+        "relationship": "reads",
+        "via": "b09_stage2.sas"
+      },
+      {
+        "from": "raw_b09.fx_rates",
+        "to": "work_b09.stage3",
+        "relationship": "reads",
+        "via": "b09_stage3.py"
+      },
+      {
+        "from": "raw_b09.adjustments",
+        "to": "work_b09.stage3",
+        "relationship": "conditional_read",
+        "via": "b09_stage3.py"
+      },
+      {
+        "from": "work_b09.stage2",
+        "to": "work_b09.stage3",
+        "relationship": "reads",
+        "via": "b09_stage3.py"
+      },
+      {
+        "from": "raw_b09.account_status",
+        "to": "work_b09.scenario_outputs",
+        "relationship": "reads",
+        "via": "scenario blocks in all files"
+      },
+      {
+        "from": "raw_b09.chargebacks",
+        "to": "work_b09.union_probe",
+        "relationship": "reads",
+        "via": "union probe"
+      },
+      {
+        "from": "work_b09.stage3",
+        "to": "mart_b09.customer_risk_daily",
+        "relationship": "writes",
+        "via": "b09_stage3.py"
+      },
+      {
+        "from": "mart_b09.customer_risk_daily",
+        "to": "audit_b09.lineage_run",
+        "relationship": "read_for_audit",
+        "via": "b09_stage3.py"
+      }
+    ],
+    "sinks": [
+      {
+        "id": "mart_b09.customer_risk_daily",
+        "kind": "database_table"
+      },
+      {
+        "id": "parquet/b09_customer_risk_daily.parquet",
+        "kind": "parquet_file"
+      },
+      {
+        "id": "audit_b09.lineage_run",
+        "kind": "database_table"
+      }
+    ],
+    "high_risk_semantics": [
+      "recursive CTE and CTE shadowing",
+      "DISTINCT ON and ROW_NUMBER deduplication",
+      "effective-dated joins with nullable end dates",
+      "JSON extraction and COALESCE",
+      "correlated EXISTS and scalar subquery",
+      "UNION and UNION ALL branch lineage",
+      "self-join and LATERAL subquery",
+      "dynamic SQL string that is returned but not executed",
+      "runtime-generated SQL executed via pandas read_sql",
+      "SAS macro-generated dataset names",
+      "SAS hash lookup and multiple DATA step inputs",
+      "PROC SQL and PROC IMPORT dependencies",
+      "conditional source read controlled by include_adjustments",
+      "multiple independent database/file sinks",
+      "audit table reads from final output",
+      "same source object used under multiple aliases",
+      "many executable derived metrics and repeated intermediate materialization",
+      "false-positive decoy names in non-executed strings/comments"
+    ],
+    "oracle_scope_note": "This oracle captures the named canonical core graph and explicitly listed adversarial probes. Generated scenario/metric intermediates are numerous; they are catalogued by naming convention and should be compared after canonical normalization. Runtime-conditional reads should be represented as conditional edges, not unconditional edges.",
+    "canonical_expected_tree": {
+      "mart_b09.customer_risk_daily": {
+        "direct_dependencies": [
+          "work_b09.stage3"
+        ],
+        "transitive_dependencies": [
+          "work_b09.stage2",
+          "work_b09.stage1",
+          "raw_b09.transactions",
+          "raw_b09.customer_history",
+          "ref_b09.risk_rules",
+          "raw_b09.fx_rates"
+        ],
+        "conditional_dependencies": [
+          "raw_b09.adjustments"
+        ]
+      },
+      "work_b09.stage2": {
+        "direct_dependencies": [
+          "work_b09.stage1",
+          "ref_b09.risk_rules"
+        ],
+        "transitive_dependencies": [
+          "raw_b09.transactions",
+          "raw_b09.customer_history"
+        ]
+      },
+      "work_b09.stage1": {
+        "direct_dependencies": [
+          "raw_b09.transactions",
+          "raw_b09.customer_history"
+        ]
+      }
+    }
+  },
+  "10_python_python_sql": {
+    "batch": "10_python_python_sql",
+    "language_combination": [
+      "Python",
+      "Python",
+      "SQL"
+    ],
+    "files": [
+      {
+        "file": "b10_stage1.py",
+        "language": "Python",
+        "stage": 1,
+        "physical_lines": 611,
+        "comment_padding": false
+      },
+      {
+        "file": "b10_stage2.py",
+        "language": "Python",
+        "stage": 2,
+        "physical_lines": 611,
+        "comment_padding": false
+      },
+      {
+        "file": "b10_stage3.sql",
+        "language": "SQL",
+        "stage": 3,
+        "physical_lines": 608,
+        "comment_padding": false
+      }
+    ],
+    "nodes": [
+      {
+        "id": "raw_b10.transactions",
+        "type": "source_table"
+      },
+      {
+        "id": "raw_b10.customer_history",
+        "type": "source_table"
+      },
+      {
+        "id": "ref_b10.risk_rules",
+        "type": "source_table"
+      },
+      {
+        "id": "raw_b10.fx_rates",
+        "type": "source_table"
+      },
+      {
+        "id": "raw_b10.adjustments",
+        "type": "source_table"
+      },
+      {
+        "id": "raw_b10.account_status",
+        "type": "source_table"
+      },
+      {
+        "id": "raw_b10.chargebacks",
+        "type": "source_table"
+      },
+      {
+        "id": "work_b10.stage1",
+        "type": "intermediate_table"
+      },
+      {
+        "id": "work_b10.stage2",
+        "type": "intermediate_table"
+      },
+      {
+        "id": "work_b10.stage3",
+        "type": "intermediate_table"
+      },
+      {
+        "id": "mart_b10.customer_risk_daily",
+        "type": "final_table"
+      },
+      {
+        "id": "audit_b10.lineage_run",
+        "type": "audit_table"
+      },
+      {
+        "id": "audit_b10.scenario_log",
+        "type": "audit_table"
+      },
+      {
+        "id": "work_b10.scenario_outputs",
+        "type": "intermediate_family"
+      },
+      {
+        "id": "work_b10.union_probe",
+        "type": "intermediate_table"
+      }
+    ],
+    "edges": [
+      {
+        "from": "raw_b10.transactions",
+        "to": "work_b10.stage1",
+        "relationship": "reads",
+        "via": "b10_stage1.py"
+      },
+      {
+        "from": "raw_b10.customer_history",
+        "to": "work_b10.stage1",
+        "relationship": "reads",
+        "via": "b10_stage1.py"
+      },
+      {
+        "from": "ref_b10.risk_rules",
+        "to": "work_b10.stage2",
+        "relationship": "reads",
+        "via": "b10_stage2.py"
+      },
+      {
+        "from": "work_b10.stage1",
+        "to": "work_b10.stage2",
+        "relationship": "reads",
+        "via": "b10_stage2.py"
+      },
+      {
+        "from": "raw_b10.fx_rates",
+        "to": "work_b10.stage3",
+        "relationship": "reads",
+        "via": "b10_stage3.sql"
+      },
+      {
+        "from": "raw_b10.adjustments",
+        "to": "work_b10.stage3",
+        "relationship": "conditional_read",
+        "via": "b10_stage3.sql"
+      },
+      {
+        "from": "work_b10.stage2",
+        "to": "work_b10.stage3",
+        "relationship": "reads",
+        "via": "b10_stage3.sql"
+      },
+      {
+        "from": "raw_b10.account_status",
+        "to": "work_b10.scenario_outputs",
+        "relationship": "reads",
+        "via": "scenario blocks in all files"
+      },
+      {
+        "from": "raw_b10.chargebacks",
+        "to": "work_b10.union_probe",
+        "relationship": "reads",
+        "via": "union probe"
+      },
+      {
+        "from": "work_b10.stage3",
+        "to": "mart_b10.customer_risk_daily",
+        "relationship": "writes",
+        "via": "b10_stage3.sql"
+      },
+      {
+        "from": "mart_b10.customer_risk_daily",
+        "to": "audit_b10.lineage_run",
+        "relationship": "read_for_audit",
+        "via": "b10_stage3.sql"
+      }
+    ],
+    "sinks": [
+      {
+        "id": "mart_b10.customer_risk_daily",
+        "kind": "database_table"
+      }
+    ],
+    "high_risk_semantics": [
+      "recursive CTE and CTE shadowing",
+      "DISTINCT ON and ROW_NUMBER deduplication",
+      "effective-dated joins with nullable end dates",
+      "JSON extraction and COALESCE",
+      "correlated EXISTS and scalar subquery",
+      "UNION and UNION ALL branch lineage",
+      "self-join and LATERAL subquery",
+      "dynamic SQL string that is returned but not executed",
+      "runtime-generated SQL executed via pandas read_sql",
+      "SAS macro-generated dataset names",
+      "SAS hash lookup and multiple DATA step inputs",
+      "PROC SQL and PROC IMPORT dependencies",
+      "conditional source read controlled by include_adjustments",
+      "multiple independent database/file sinks",
+      "audit table reads from final output",
+      "same source object used under multiple aliases",
+      "many executable derived metrics and repeated intermediate materialization",
+      "false-positive decoy names in non-executed strings/comments"
+    ],
+    "oracle_scope_note": "This oracle captures the named canonical core graph and explicitly listed adversarial probes. Generated scenario/metric intermediates are numerous; they are catalogued by naming convention and should be compared after canonical normalization. Runtime-conditional reads should be represented as conditional edges, not unconditional edges.",
+    "canonical_expected_tree": {
+      "mart_b10.customer_risk_daily": {
+        "direct_dependencies": [
+          "work_b10.stage3"
+        ],
+        "transitive_dependencies": [
+          "work_b10.stage2",
+          "work_b10.stage1",
+          "raw_b10.transactions",
+          "raw_b10.customer_history",
+          "ref_b10.risk_rules",
+          "raw_b10.fx_rates"
+        ],
+        "conditional_dependencies": [
+          "raw_b10.adjustments"
+        ]
+      },
+      "work_b10.stage2": {
+        "direct_dependencies": [
+          "work_b10.stage1",
+          "ref_b10.risk_rules"
+        ],
+        "transitive_dependencies": [
+          "raw_b10.transactions",
+          "raw_b10.customer_history"
+        ]
+      },
+      "work_b10.stage1": {
+        "direct_dependencies": [
+          "raw_b10.transactions",
+          "raw_b10.customer_history"
+        ]
+      }
+    }
+  }
+}

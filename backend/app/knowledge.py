@@ -12,10 +12,18 @@ from __future__ import annotations
 
 import functools
 import json
+import re
 from pathlib import Path
 from typing import Any
 
 KB_DIR = Path(__file__).resolve().parent / "knowledge"
+
+_TOKEN = re.compile(r"[A-Za-z0-9]+")
+
+
+def _tokens(text: str) -> set[str]:
+    """Lower-cased alphanumeric tokens, so 'AB' never matches inside 'label'."""
+    return {t.lower() for t in _TOKEN.findall(text)}
 
 
 @functools.lru_cache(maxsize=8)
@@ -41,10 +49,17 @@ def build_context(result: dict[str, Any]) -> dict[str, Any]:
         picked = [i for i in idioms if any(t in blob for t in i.get("triggers", []))]
         ctx["sas_idioms"] = picked or idioms[:4]
 
-    # Glossary — only terms that appear in dataset names.
-    names = " ".join(str(d.get("name", "")) for d in datasets.values()).lower()
+    # Glossary — only terms that appear as a WHOLE TOKEN in dataset/column names.
+    # Exact-token matching (not substring) avoids injecting unrelated definitions
+    # for short keys like 'AB', 'pd', 'ead' that would otherwise match inside words.
+    name_tokens: set[str] = set()
+    for key, d in datasets.items():
+        name_tokens |= _tokens(str(key))
+        name_tokens |= _tokens(str(d.get("name", "")))
+        for col in d.get("columns", []) or []:
+            name_tokens |= _tokens(str(col))
     glossary = _load("glossary.json").get("terms", {})
-    matched = {k: v for k, v in glossary.items() if k.lower() in names}
+    matched = {k: v for k, v in glossary.items() if k.lower() in name_tokens}
     if matched:
         ctx["glossary"] = matched
 

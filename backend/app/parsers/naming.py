@@ -43,11 +43,16 @@ def split_name(raw: str) -> tuple[str, str, str]:
         bare = root
     elif "." in base:                      # schema.table or libref.table
         dtype = "table"
-        bare = base.split(".")[-1]
+        # last non-empty component: a trailing "." from a SAS macro close
+        # (e.g. cc.plot_&grp.) would otherwise yield an empty id
+        parts = [p for p in base.split(".") if p.strip()]
+        bare = parts[-1] if parts else base
     else:
         bare = base
 
     bare = re.sub(r"\s+", "_", bare.strip()).lower()
+    if not bare:                           # never emit an empty id (cytoscape rejects it)
+        bare = re.sub(r"\s+", "_", cleaned.strip()).lower() or "unnamed"
     return bare, display, dtype
 
 

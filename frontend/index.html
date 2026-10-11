@@ -16,7 +16,7 @@
   <!-- ====================== HOME / LANDING ====================== -->
   <section id="home" class="screen home">
     <nav class="home-nav">
-      <div class="brand">
+      <div class="brand" id="brandHome" role="button" tabindex="0" title="New analysis">
         <span class="logo">L</span>
         <div>
           <strong>Lineis</strong>
@@ -24,9 +24,7 @@
         </div>
       </div>
       <div class="home-nav-right">
-        <span class="pill">SQL</span>
-        <span class="pill">SAS</span>
-        <span class="pill">Python</span>
+        <button class="btn ghost sm" id="homeHistoryBtn" title="Your saved analyses">⟲ History</button>
         <div class="sep-v"></div>
         <div id="acctArea" class="acct-area">
           <button class="btn ghost sm" id="signInBtn">Sign in</button>
@@ -35,6 +33,14 @@
     </nav>
 
     <div class="hero">
+      <section id="historySection" class="history-section" hidden>
+        <div class="history-head">
+          <h2>Your saved analyses</h2>
+          <span class="muted" id="historyCount"></span>
+        </div>
+        <div id="historyList" class="history-list"></div>
+      </section>
+
       <h1>Trace every regulatory number<br />back to its source — automatically.</h1>
       <p class="lede">
         Point Lineis at your SQL, SAS and Python. It parses the code, reconstructs
@@ -58,14 +64,6 @@
       </div>
 
       <div id="batchGrid" class="batch-grid"></div>
-
-      <section id="historySection" class="history-section" hidden>
-        <div class="history-head">
-          <h2>Your saved analyses</h2>
-          <span class="muted" id="historyCount"></span>
-        </div>
-        <div id="historyList" class="history-list"></div>
-      </section>
 
       <div class="value-cards">
         <div class="vcard">
@@ -93,67 +91,99 @@
 
   <!-- ====================== WORKSPACE ====================== -->
   <section id="workspace" class="screen workspace" hidden>
-    <header class="topbar">
-      <div class="brand small">
+    <!-- LEFT NAV RAIL -->
+    <aside class="ws-rail">
+      <div class="rail-brand brand small" id="brandWs" role="button" tabindex="0" title="New analysis">
         <span class="logo">L</span>
-        <strong>Lineis</strong>
-      </div>
-      <div class="topbar-center">
-        <div class="search">
-          <span class="search-ico">⌕</span>
-          <input id="search" type="text" placeholder="Search datasets…" autocomplete="off" />
-        </div>
-        <div class="filters" id="langFilters">
-          <button class="chip-toggle active" data-lang="sql"><i class="d sql"></i>SQL</button>
-          <button class="chip-toggle active" data-lang="sas"><i class="d sas"></i>SAS</button>
-          <button class="chip-toggle active" data-lang="python"><i class="d py"></i>Python</button>
+        <div>
+          <strong>Lineis</strong>
+          <span class="sub">Lineage Intelligence</span>
         </div>
       </div>
-      <div class="topbar-right">
-        <button class="icon-btn" id="layoutBtn" title="Toggle layout direction">⇄</button>
-        <button class="icon-btn" id="fitBtn" title="Fit to screen">⤢</button>
-        <button class="icon-btn" id="resetHl" title="Clear highlight">⦸</button>
-        <div class="sep"></div>
-        <button class="btn ghost sm" id="exportJson">Export JSON</button>
-        <button class="btn ghost sm" id="exportOl">OpenLineage</button>
-        <button class="btn ghost sm" id="saveBtn">★ Save</button>
-        <button class="btn primary sm" id="newBtn">New analysis</button>
+
+      <nav class="rail-nav">
+        <div class="rail-group">Lineage</div>
+        <button class="rail-item active" data-view="summary"><span class="si-ico">▤</span><span>Summary</span></button>
+        <button class="rail-item" data-view="datasets"><span class="si-ico">▦</span><span>Datasets</span></button>
+        <button class="rail-item" data-view="operations"><span class="si-ico">⇄</span><span>Operations</span></button>
+        <button class="rail-item" data-view="details"><span class="si-ico">◉</span><span>Details</span></button>
+        <button class="rail-item" data-view="review"><span class="si-ico">✦</span><span>Review</span><span id="reviewBadge" class="badge" hidden>0</span></button>
+
+        <div class="rail-group">Library</div>
+        <button class="rail-item" data-view="history"><span class="si-ico">⟲</span><span>History</span></button>
+      </nav>
+
+      <div class="rail-foot">
+        <div id="acctAreaWs" class="side-acct"></div>
+        <button class="btn primary sm block" id="newBtn">+ New analysis</button>
       </div>
-    </header>
+    </aside>
 
-    <div class="ws-body">
-      <div id="graph"></div>
-
-      <aside class="ws-panel">
-        <nav class="tabs">
-          <button class="tab active" data-tab="summary">Summary</button>
-          <button class="tab" data-tab="datasets">Datasets</button>
-          <button class="tab" data-tab="operations">Operations</button>
-          <button class="tab" data-tab="details">Details</button>
-          <button class="tab" data-tab="review">Review <span id="reviewBadge" class="badge" hidden>0</span></button>
-        </nav>
-
-        <div class="tab-body">
-          <div class="tabpane active" data-pane="summary" id="paneSummary"></div>
-          <div class="tabpane" data-pane="datasets" id="paneDatasets"></div>
-          <div class="tabpane" data-pane="operations" id="paneOperations"></div>
-          <div class="tabpane" data-pane="details" id="paneDetails">
-            <p class="muted empty">Select a dataset or transformation in the graph to inspect its lineage and evidence.</p>
+    <!-- MAIN COLUMN -->
+    <div class="ws-main">
+      <header class="topbar">
+        <div class="topbar-center">
+          <div class="search">
+            <span class="search-ico">⌕</span>
+            <input id="search" type="text" placeholder="Search datasets…" autocomplete="off" />
           </div>
-          <div class="tabpane" data-pane="review" id="paneReview"></div>
+          <div class="filters" id="langFilters">
+            <button class="chip-toggle active" data-lang="sql"><i class="d sql"></i>SQL</button>
+            <button class="chip-toggle active" data-lang="sas"><i class="d sas"></i>SAS</button>
+            <button class="chip-toggle active" data-lang="python"><i class="d py"></i>Python</button>
+          </div>
         </div>
-      </aside>
-    </div>
+        <div class="topbar-right">
+          <button class="icon-btn" id="layoutBtn" title="Toggle layout direction">⇄</button>
+          <button class="icon-btn" id="fitBtn" title="Fit to screen">⤢</button>
+          <button class="icon-btn" id="resetHl" title="Clear highlight">⦸</button>
+          <div class="sep"></div>
+          <button class="btn ghost sm" id="exportJson">Export JSON</button>
+          <button class="btn ghost sm" id="exportOl">OpenLineage</button>
+          <button class="btn ghost sm" id="saveBtn">★ Save</button>
+        </div>
+      </header>
 
-    <div class="legend">
-      <span><i class="sw root"></i> Source</span>
-      <span><i class="sw mid"></i> Intermediate</span>
-      <span><i class="sw sink"></i> Output</span>
-      <span class="legsep"></span>
-      <span><i class="ln sql"></i> SQL</span>
-      <span><i class="ln sas"></i> SAS</span>
-      <span><i class="ln py"></i> Python</span>
-      <span><i class="sw dashed"></i> Low confidence</span>
+      <div class="ws-content">
+        <!-- Inspector panel: content for the active Lineage view -->
+        <aside class="ws-panel">
+          <div class="panel-head"><span id="panelTitle">Summary</span></div>
+          <div class="tab-body">
+            <div class="tabpane active" data-pane="summary" id="paneSummary"></div>
+            <div class="tabpane" data-pane="datasets" id="paneDatasets"></div>
+            <div class="tabpane" data-pane="operations" id="paneOperations"></div>
+            <div class="tabpane" data-pane="details" id="paneDetails">
+              <p class="muted empty">Select a dataset or transformation in the graph to inspect its lineage and evidence.</p>
+            </div>
+            <div class="tabpane" data-pane="review" id="paneReview"></div>
+          </div>
+        </aside>
+
+        <div id="graph"></div>
+
+        <!-- History page: replaces graph + panel when History is selected -->
+        <section class="ws-history" id="wsHistory" hidden>
+          <div class="history-head">
+            <h2>Your saved analyses</h2>
+            <span class="muted" id="historyCountWs"></span>
+          </div>
+          <div id="historyListWs" class="history-list"></div>
+        </section>
+      </div>
+
+      <div class="legend" id="wsLegend">
+        <span><i class="sw root"></i> Source</span>
+        <span><i class="sw mid"></i> Intermediate</span>
+        <span><i class="sw sink"></i> Output</span>
+        <span><i class="sw chart"></i> Chart / report</span>
+        <span><i class="sw runtime"></i> Runtime code</span>
+        <span class="legsep"></span>
+        <span><i class="ln sql"></i> SQL</span>
+        <span><i class="ln sas"></i> SAS</span>
+        <span><i class="ln py"></i> Python</span>
+        <span><i class="sw dashed"></i> Low confidence</span>
+        <span><i class="ln ai"></i> AI-inferred</span>
+      </div>
     </div>
   </section>
 
@@ -166,8 +196,8 @@
       <h2 id="authTitle">Sign in to Lineis</h2>
       <p class="muted" id="authSub">Save your analyses and revisit them any time.</p>
       <form id="authForm" class="auth-form">
-        <label>Email
-          <input type="email" id="authEmail" autocomplete="email" required />
+        <label>Username
+          <input type="text" id="authUsername" autocomplete="username" autocapitalize="none" spellcheck="false" pattern="[A-Za-z0-9_.\-]{3,30}" required />
         </label>
         <label>Password
           <input type="password" id="authPassword" autocomplete="current-password" minlength="6" required />

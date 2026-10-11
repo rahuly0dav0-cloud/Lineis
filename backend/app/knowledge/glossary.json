@@ -1,5 +1,5 @@
 {
-  "description": "Curated business/domain glossary. Only terms whose key appears in the parsed dataset or column names are injected into the agent prompt, keeping context focused. Extend this per client engagement.",
+  "description": "Curated, per-engagement business/domain glossary. ADVISORY ONLY: it tells the agent what a name means, not how data flows. A term is injected only when its key appears as a whole token in a parsed dataset/column name. Keep it scoped to the model under analysis; do not add unrelated terms (they only create false matches and noise).",
   "terms": {
     "DND_NB": "Distribution Node Number — the branch/node identifier; primary key across the branch staffing model.",
     "FTE": "Full-Time Equivalent — the staffing quantity the model estimates and governs.",
@@ -10,13 +10,6 @@
     "yr_month": "Reporting period encoded as YYYYMM; the monthly grain key.",
     "util": "Utilisation metric (sales/open/servicing) feeding the FTE estimate.",
     "erlang": "Erlang staffing input (queueing-based teller capacity).",
-    "guide": "Guidance output — the governed FTE recommendation per node.",
-    "finrep": "FINREP — EU supervisory financial reporting framework.",
-    "corep": "COREP — EU supervisory capital/own-funds reporting framework.",
-    "rwa": "Risk-Weighted Assets.",
-    "pd": "Probability of Default (credit risk).",
-    "lgd": "Loss Given Default (credit risk).",
-    "ead": "Exposure At Default (credit risk).",
-    "ecl": "Expected Credit Loss (IFRS 9)."
+    "guide": "Guidance output — the governed FTE recommendation per node."
   }
 }

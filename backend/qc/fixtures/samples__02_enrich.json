@@ -1,0 +1,13 @@
+{
+  "file": "samples/02_enrich.sas",
+  "language": "sas",
+  "mode": "complete",
+  "notes": "Stage 2 enrich: merge stg_customers+stg_accounts -> customer_accounts; sort stg_collateral -> collateral_clean; proc sql aggregate stg_transactions -> txn_summary.",
+  "edges": [
+    ["stg_customers", "customer_accounts"],
+    ["stg_accounts", "customer_accounts"],
+    ["stg_collateral", "collateral_clean"],
+    ["stg_transactions", "txn_summary"]
+  ],
+  "forbidden": []
+}

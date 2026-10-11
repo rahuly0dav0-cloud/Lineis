@@ -1,0 +1,328 @@
+{
+  "version": "2.0",
+  "batch_count": 10,
+  "source_file_count": 30,
+  "minimum_lines_per_file": 594,
+  "batches": [
+    {
+      "folder": "01_sql_sas_python",
+      "languages": [
+        "SQL",
+        "SAS",
+        "Python"
+      ],
+      "files": [
+        {
+          "file": "b01_stage1.sql",
+          "language": "SQL",
+          "stage": 1,
+          "physical_lines": 608,
+          "comment_padding": false
+        },
+        {
+          "file": "b01_stage2.sas",
+          "language": "SAS",
+          "stage": 2,
+          "physical_lines": 594,
+          "comment_padding": false
+        },
+        {
+          "file": "b01_stage3.py",
+          "language": "Python",
+          "stage": 3,
+          "physical_lines": 611,
+          "comment_padding": false
+        }
+      ],
+      "oracle": "01_sql_sas_python/ground_truth.json"
+    },
+    {
+      "folder": "02_sql_sql_sas",
+      "languages": [
+        "SQL",
+        "SQL",
+        "SAS"
+      ],
+      "files": [
+        {
+          "file": "b02_stage1.sql",
+          "language": "SQL",
+          "stage": 1,
+          "physical_lines": 608,
+          "comment_padding": false
+        },
+        {
+          "file": "b02_stage2.sql",
+          "language": "SQL",
+          "stage": 2,
+          "physical_lines": 608,
+          "comment_padding": false
+        },
+        {
+          "file": "b02_stage3.sas",
+          "language": "SAS",
+          "stage": 3,
+          "physical_lines": 594,
+          "comment_padding": false
+        }
+      ],
+      "oracle": "02_sql_sql_sas/ground_truth.json"
+    },
+    {
+      "folder": "03_python_sas_sas",
+      "languages": [
+        "Python",
+        "SAS",
+        "SAS"
+      ],
+      "files": [
+        {
+          "file": "b03_stage1.py",
+          "language": "Python",
+          "stage": 1,
+          "physical_lines": 611,
+          "comment_padding": false
+        },
+        {
+          "file": "b03_stage2.sas",
+          "language": "SAS",
+          "stage": 2,
+          "physical_lines": 594,
+          "comment_padding": false
+        },
+        {
+          "file": "b03_stage3.sas",
+          "language": "SAS",
+          "stage": 3,
+          "physical_lines": 594,
+          "comment_padding": false
+        }
+      ],
+      "oracle": "03_python_sas_sas/ground_truth.json"
+    },
+    {
+      "folder": "04_sas_python_sql",
+      "languages": [
+        "SAS",
+        "Python",
+        "SQL"
+      ],
+      "files": [
+        {
+          "file": "b04_stage1.sas",
+          "language": "SAS",
+          "stage": 1,
+          "physical_lines": 594,
+          "comment_padding": false
+        },
+        {
+          "file": "b04_stage2.py",
+          "language": "Python",
+          "stage": 2,
+          "physical_lines": 611,
+          "comment_padding": false
+        },
+        {
+          "file": "b04_stage3.sql",
+          "language": "SQL",
+          "stage": 3,
+          "physical_lines": 608,
+          "comment_padding": false
+        }
+      ],
+      "oracle": "04_sas_python_sql/ground_truth.json"
+    },
+    {
+      "folder": "05_sql_python_python",
+      "languages": [
+        "SQL",
+        "Python",
+        "Python"
+      ],
+      "files": [
+        {
+          "file": "b05_stage1.sql",
+          "language": "SQL",
+          "stage": 1,
+          "physical_lines": 608,
+          "comment_padding": false
+        },
+        {
+          "file": "b05_stage2.py",
+          "language": "Python",
+          "stage": 2,
+          "physical_lines": 611,
+          "comment_padding": false
+        },
+        {
+          "file": "b05_stage3.py",
+          "language": "Python",
+          "stage": 3,
+          "physical_lines": 611,
+          "comment_padding": false
+        }
+      ],
+      "oracle": "05_sql_python_python/ground_truth.json"
+    },
+    {
+      "folder": "06_sas_sql_sql",
+      "languages": [
+        "SAS",
+        "SQL",
+        "SQL"
+      ],
+      "files": [
+        {
+          "file": "b06_stage1.sas",
+          "language": "SAS",
+          "stage": 1,
+          "physical_lines": 594,
+          "comment_padding": false
+        },
+        {
+          "file": "b06_stage2.sql",
+          "language": "SQL",
+          "stage": 2,
+          "physical_lines": 608,
+          "comment_padding": false
+        },
+        {
+          "file": "b06_stage3.sql",
+          "language": "SQL",
+          "stage": 3,
+          "physical_lines": 608,
+          "comment_padding": false
+        }
+      ],
+      "oracle": "06_sas_sql_sql/ground_truth.json"
+    },
+    {
+      "folder": "07_python_sql_sas",
+      "languages": [
+        "Python",
+        "SQL",
+        "SAS"
+      ],
+      "files": [
+        {
+          "file": "b07_stage1.py",
+          "language": "Python",
+          "stage": 1,
+          "physical_lines": 611,
+          "comment_padding": false
+        },
+        {
+          "file": "b07_stage2.sql",
+          "language": "SQL",
+          "stage": 2,
+          "physical_lines": 608,
+          "comment_padding": false
+        },
+        {
+          "file": "b07_stage3.sas",
+          "language": "SAS",
+          "stage": 3,
+          "physical_lines": 594,
+          "comment_padding": false
+        }
+      ],
+      "oracle": "07_python_sql_sas/ground_truth.json"
+    },
+    {
+      "folder": "08_sql_sas_sql",
+      "languages": [
+        "SQL",
+        "SAS",
+        "SQL"
+      ],
+      "files": [
+        {
+          "file": "b08_stage1.sql",
+          "language": "SQL",
+          "stage": 1,
+          "physical_lines": 608,
+          "comment_padding": false
+        },
+        {
+          "file": "b08_stage2.sas",
+          "language": "SAS",
+          "stage": 2,
+          "physical_lines": 594,
+          "comment_padding": false
+        },
+        {
+          "file": "b08_stage3.sql",
+          "language": "SQL",
+          "stage": 3,
+          "physical_lines": 608,
+          "comment_padding": false
+        }
+      ],
+      "oracle": "08_sql_sas_sql/ground_truth.json"
+    },
+    {
+      "folder": "09_sas_sas_python",
+      "languages": [
+        "SAS",
+        "SAS",
+        "Python"
+      ],
+      "files": [
+        {
+          "file": "b09_stage1.sas",
+          "language": "SAS",
+          "stage": 1,
+          "physical_lines": 594,
+          "comment_padding": false
+        },
+        {
+          "file": "b09_stage2.sas",
+          "language": "SAS",
+          "stage": 2,
+          "physical_lines": 594,
+          "comment_padding": false
+        },
+        {
+          "file": "b09_stage3.py",
+          "language": "Python",
+          "stage": 3,
+          "physical_lines": 611,
+          "comment_padding": false
+        }
+      ],
+      "oracle": "09_sas_sas_python/ground_truth.json"
+    },
+    {
+      "folder": "10_python_python_sql",
+      "languages": [
+        "Python",
+        "Python",
+        "SQL"
+      ],
+      "files": [
+        {
+          "file": "b10_stage1.py",
+          "language": "Python",
+          "stage": 1,
+          "physical_lines": 611,
+          "comment_padding": false
+        },
+        {
+          "file": "b10_stage2.py",
+          "language": "Python",
+          "stage": 2,
+          "physical_lines": 611,
+          "comment_padding": false
+        },
+        {
+          "file": "b10_stage3.sql",
+          "language": "SQL",
+          "stage": 3,
+          "physical_lines": 608,
+          "comment_padding": false
+        }
+      ],
+      "oracle": "10_python_python_sql/ground_truth.json"
+    }
+  ]
+}

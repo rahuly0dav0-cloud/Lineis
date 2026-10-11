@@ -31,6 +31,8 @@ from . import knowledge
 from .config import GROQ_API_KEY, GROQ_BASE_URL, GROQ_MODEL
 
 _SSL_CTX = ssl.create_default_context(cafile=certifi.where())
+_MAX_ATTEMPTS = 5          # retries on 429 (free-tier rate limits)
+_INTERSTAGE_PAUSE = 1.5    # seconds between discovery and validation to ease TPM bursts
 
 _DISCOVERY_SYSTEM = (
     "You are a data-lineage DISCOVERY agent for a bank's regulatory/reporting "
@@ -85,21 +87,23 @@ def _call_groq(system: str, user: str) -> dict[str, Any]:
             "Accept": "application/json",
         },
     )
-    for attempt in range(3):
+    for attempt in range(_MAX_ATTEMPTS):
         try:
             with urllib.request.urlopen(req, timeout=90, context=_SSL_CTX) as resp:
                 payload = json.loads(resp.read().decode("utf-8"))
             return json.loads(payload["choices"][0]["message"]["content"])
         except urllib.error.HTTPError as exc:
-            if exc.code == 429 and attempt < 2:
-                retry_after = exc.headers.get("Retry-After")
-                wait = float(retry_after) if retry_after else 2.0 * (attempt + 1)
-                time.sleep(min(wait, 8.0))
+            if exc.code == 429 and attempt < _MAX_ATTEMPTS - 1:
+                try:
+                    wait = float(exc.headers.get("Retry-After"))
+                except (TypeError, ValueError):
+                    wait = 2.0 * (2 ** attempt)  # 2, 4, 8, 16…
+                time.sleep(min(wait + 0.5, 30.0))
                 continue
             raise
 
 
-def _select_candidates(result: dict[str, Any], limit: int = 10) -> list[dict[str, Any]]:
+def _select_candidates(result: dict[str, Any], limit: int = 8) -> list[dict[str, Any]]:
     ops = result.get("operations", [])
     ranked = sorted(
         ops,
@@ -183,8 +187,14 @@ def review(result: dict[str, Any]) -> dict[str, Any]:
 
     validations: list[dict[str, Any]] = []
     if proposals:
+        time.sleep(_INTERSTAGE_PAUSE)  # let the per-minute token bucket refill
         try:
             validations = _validation(proposals, candidates, kb)
+        except urllib.error.HTTPError as exc:
+            detail = "rate limit — try again shortly" if exc.code == 429 else f"API error {exc.code}"
+            validations = [{"op_id": "*", "verdict": "needs_review",
+                            "confidence": 0.0, "issues": [f"Validation agent: {detail}"],
+                            "comment": "Proposals are shown but not yet validated."}]
         except Exception as exc:
             validations = [{"op_id": "*", "verdict": "needs_review",
                             "confidence": 0.0, "issues": [f"Validation agent failed: {exc}"],
