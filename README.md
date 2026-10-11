@@ -1,3 +1,13 @@
+---
+title: Lineis
+emoji: 🔗
+colorFrom: indigo
+colorTo: blue
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # Lineis — Data Lineage Engine (Layer 1)
 
 Parses **SQL, SAS and Python** source code and reconstructs end-to-end data

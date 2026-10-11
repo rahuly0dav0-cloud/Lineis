@@ -1,0 +1,23 @@
+# Keep the image small and never ship secrets, local data or client code.
+**/.venv
+**/__pycache__
+**/*.pyc
+**/*.pyo
+.git
+.github
+.vscode
+.DS_Store
+
+# Secrets + local-only state (secrets are injected via HF Space Secrets)
+backend/.env
+backend/data
+
+# Not needed at runtime
+backend/qc
+docs
+data_lineage_stress_corpus_v2
+
+# Client source (also gitignored — belt and braces)
+FTE_p2a.sas
+p2b.sas
+SAS_code_Model_1
