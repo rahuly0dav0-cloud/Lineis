@@ -41,6 +41,10 @@ exports/
 # Client-derived QC fixtures reference client table names — keep off GitHub.
 /backend/qc/fixtures/client_*.json
 
+# ---- Local / synthetic test code — not part of the shipped app ----
+/finrep_lineage_test_pipeline/
+/test_code/
+
 # ---- OS / editor ----
 .DS_Store
 Thumbs.db
