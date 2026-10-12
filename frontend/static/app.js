@@ -21,6 +21,23 @@ const cardW = (label) => {
   const longest = String(label || "").split("\n").reduce((m, l) => Math.max(m, l.length), 0);
   return Math.max(94, Math.min(190, longest * 7 + 26));
 };
+// Cytoscape only wraps on whitespace; dataset names (dots/underscores, no
+// spaces) never break. Split a long name into 2 balanced lines at the
+// separator nearest the middle so the text stays inside the card.
+function wrapLabel(label) {
+  const s = String(label || "");
+  if (s.length <= 16) return s;
+  const seps = [];
+  for (let i = 0; i < s.length - 1; i++) if (s[i] === "." || s[i] === "_") seps.push(i);
+  const mid = s.length / 2;
+  if (!seps.length) {
+    const m = Math.ceil(mid);
+    return s.slice(0, m) + "\n" + s.slice(m);
+  }
+  let best = seps[0];
+  for (const i of seps) if (Math.abs(i - mid) < Math.abs(best - mid)) best = i;
+  return s.slice(0, best + 1) + "\n" + s.slice(best + 1);
+}
 const LINEAGE_VIEWS = { summary: "Summary", datasets: "Datasets", operations: "Operations", details: "Inspect", review: "Review" };
 const $ = (id) => document.getElementById(id);
 
@@ -99,16 +116,19 @@ function cyStyle() {
         "shape": "round-rectangle",
         "background-color": (n) => NODE_FILL[n.data("role")] || "#191333",
         "border-width": 2, "border-color": (n) => ROLE_COLOR[n.data("role")] || "#b280ff",
-        "label": "data(label)", "color": "#e8edf5", "font-size": 11, "font-weight": 600,
+        "label": (n) => wrapLabel(n.data("label")), "color": "#e8edf5",
+        "font-size": 11, "font-weight": 600, "line-height": 1.25,
         "text-valign": "center", "text-halign": "center",
-        "text-wrap": "wrap", "text-max-width": 150,
-        "width": (n) => cardW(n.data("label")), "height": 40, "padding": 6 } },
+        "text-wrap": "wrap", "text-max-width": 168,
+        "width": (n) => cardW(wrapLabel(n.data("label"))),
+        "height": (n) => wrapLabel(n.data("label")).includes("\n") ? 50 : 38, "padding": 6 } },
     { selector: "node.hl", style: { "border-color": "#ec0000", "border-width": 2.5, "color": "#fff" } },
     // Column-trace mode: a participating card shows the field name under the
     // dataset name; the focused field's card is filled red.
     { selector: "node.colmode", style: {
         "label": "data(colBadge)", "text-max-width": 168, "font-size": 10.5,
-        "width": (n) => cardW(n.data("colBadge")), "height": 50 } },
+        "width": (n) => cardW(n.data("colBadge")),
+        "height": (n) => 26 + String(n.data("colBadge") || "").split("\n").length * 14 } },
     { selector: "node.colfocus", style: {
         "border-color": "#ec0000", "border-width": 3, "background-color": "#2a1113", "color": "#fff" } },
     { selector: "edge", style: {
@@ -740,7 +760,7 @@ function highlightColumnInGraph(dsId, colName) {
     const n = cy.getElementById(id);
     if (n.empty()) return;
     const name = ((lastResult.datasets || {})[id] || {}).name || id;
-    n.data("colBadge", name + "\n◦ " + [...cols].join(", "));
+    n.data("colBadge", wrapLabel(name) + "\n◦ " + [...cols].join(", "));
     n.removeClass("faded").addClass("colmode");
   });
   const fn = cy.getElementById(dsId);
