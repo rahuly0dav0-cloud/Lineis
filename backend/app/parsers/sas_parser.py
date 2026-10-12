@@ -69,6 +69,19 @@ _SELECT_INTO = re.compile(r"\binto\s*:", re.IGNORECASE)
 # inline macro execution as its own statement: &name.  ;
 _MACRO_EXEC = re.compile(r"(?:(?<=;)|(?<=\n)|\A)\s*&(?P<name>\w+)\s*\.?\s*;")
 
+# --- deterministic macro-variable resolution --------------------------------
+# %let NAME = VALUE;  -> constant we can propagate into dataset names.
+_LET = re.compile(r"%let\s+(?P<name>\w+)\s*=\s*(?P<val>[^;]*);", re.IGNORECASE)
+# %let VAR = %scan(&LIST., &i.);  -> VAR iterates over the tokens of &LIST.
+_SCAN_LET = re.compile(
+    r"%let\s+(?P<var>\w+)\s*=\s*%scan\(\s*&(?P<list>\w+)\.?", re.IGNORECASE)
+_MACRO_REF = re.compile(r"&(?P<name>\w+)\.?")
+# PROC SQL INSERT INTO ... SELECT ... FROM/JOIN ...
+_INSERT_INTO = re.compile(r"\binsert\s+into\s+(?P<t>[\w.&]+)", re.IGNORECASE)
+# PROC IMPORT / CSVIMPORT source file option.
+_DATAFILE = re.compile(
+    r'\b(?:datafile|infile)\s*=\s*["\']?(?P<path>[^"\';\s]+)', re.IGNORECASE)
+
 # PROCs that render a terminal artifact (chart / report) rather than a dataset,
 # so their input is really a FINAL output of the flow, not a dead end.
 _VISUAL_PROCS = {
@@ -118,14 +131,24 @@ def _strip_balanced_parens(s: str) -> str:
     return "".join(out)
 
 
-def _dataset_tokens(raw: str) -> list[str]:
-    """Split a SET / MERGE / data= clause into individual dataset references."""
+def _dataset_tokens(raw: str, scalars: dict[str, str] | None = None) -> list[str]:
+    """Split a SET / MERGE / data= clause into individual dataset references.
+
+    A token that *starts* with a macro variable (``&LIB..TABLE``) is otherwise
+    silently dropped; if `scalars` resolves it to a concrete name we keep it so
+    the lineage is not lost. Tokens that merely *embed* a macro var
+    (``plot_&grp``) are left untouched so existing output is unchanged."""
     raw = _strip_balanced_parens(raw)
     tokens = []
     for tok in re.split(r"[\s,]+", raw.strip()):
         tok = tok.strip()
-        if not tok or "=" in tok or tok.startswith("&"):
+        if not tok or "=" in tok:
             continue
+        if tok.startswith("&"):
+            resolved = _subst_scalars(tok, scalars) if scalars else tok
+            if resolved.startswith("&"):
+                continue  # still a runtime-built name — can't resolve
+            tok = resolved
         if tok.lower() in _SKIP:
             continue
         tokens.append(tok)
@@ -173,10 +196,70 @@ def _register_visual(datasets: dict[str, Dataset], proc: str, input_id: str,
     return vid
 
 
+# --- macro-variable resolution ---------------------------------------------
+def _collect_macro_vars(text: str) -> tuple[dict[str, str], dict[str, list[str]]]:
+    """Harvest %let constants and loop lists for deterministic substitution.
+
+    Returns (scalars, loop_lists):
+      * scalars    — %let NAME = literal;  (single-line, non-function values)
+      * loop_lists — VAR -> [tokens]  for the  %do i=1 %to countw(&LIST.);
+                     %let VAR=%scan(&LIST.,&i.)  idiom, so `&VAR.` can be
+                     unrolled over the list values.
+    """
+    scalars: dict[str, str] = {}
+    for m in _LET.finditer(text):
+        val = m.group("val").strip()
+        # Function-valued (%scan/%sysfunc/...) or multi-line values are not
+        # static scalars — skip so we never inject newlines (line numbers stay
+        # intact) or guess runtime results.
+        if val.startswith("%") or "\n" in val:
+            continue
+        scalars[m.group("name").lower()] = val
+    # Resolve nested references inside values (&A used within another %let).
+    for _ in range(3):
+        changed = False
+        for k, v in list(scalars.items()):
+            nv = _MACRO_REF.sub(
+                lambda mm: scalars.get(mm.group("name").lower(), mm.group(0)), v)
+            if nv != v:
+                scalars[k] = nv
+                changed = True
+        if not changed:
+            break
+    loop_lists: dict[str, list[str]] = {}
+    for m in _SCAN_LET.finditer(text):
+        lst = m.group("list").lower()
+        if lst in scalars and len(scalars[lst].split()) > 1:
+            loop_lists[m.group("var").lower()] = scalars[lst].split()
+    return scalars, loop_lists
+
+
+def _subst_scalars(text: str, scalars: dict[str, str]) -> str:
+    """Replace &NAME. / &NAME with its %let constant everywhere. Values are
+    single-line, so newline count — and therefore every line number — is
+    preserved."""
+    if not scalars:
+        return text
+    return _MACRO_REF.sub(
+        lambda m: scalars.get(m.group("name").lower(), m.group(0)), text)
+
+
+def _expand_ref(raw: str, loop_lists: dict[str, list[str]]) -> list[str]:
+    """Unroll a dataset reference that embeds a known loop variable into one
+    concrete reference per list value (e.g. ASSETS_&country. over ES PT DE UK).
+    References without a loop variable are returned unchanged."""
+    for var, vals in loop_lists.items():
+        pat = re.compile(r"&" + re.escape(var) + r"\b\.?", re.IGNORECASE)
+        if pat.search(raw):
+            return [pat.sub(v, raw) for v in vals] or [raw]
+    return [raw]
+
+
 # --- PROC SQL (SAS flavour) -------------------------------------------------
 def _parse_proc_sql(block: str, base_line: int, filename: str,
                     result: ParseResult, idx: int,
-                    macro_defs: set[str]) -> None:
+                    macro_defs: set[str],
+                    loop_lists: dict[str, list[str]]) -> None:
     for si, stmt in enumerate(block.split(";")):
         s = stmt.strip()
         if not s:
@@ -203,6 +286,40 @@ def _parse_proc_sql(block: str, base_line: int, filename: str,
                 confidence="high",
                 notes="PROC SQL create table",
             ))
+        elif (ins := _INSERT_INTO.search(s)) and tables:
+            # INSERT INTO target SELECT ... FROM sources. Loop variables in the
+            # table names are unrolled over their list values (one input per
+            # country, etc.) so the dynamic hop is surfaced, not dropped.
+            raw_refs = [ins.group("t"), *tables]
+            had_macro = any("&" in r for r in raw_refs)
+            for target in _expand_ref(ins.group("t"), loop_lists):
+                tid = _register(result.datasets, target, filename)
+                input_ids = []
+                for t in tables:
+                    for sr in _expand_ref(t, loop_lists):
+                        did = _register(result.datasets, sr, filename)
+                        if did != tid and did not in input_ids:
+                            input_ids.append(did)
+                result.operations.append(Operation(
+                    id=f"{filename}:sas:insert:{idx}:{si}:{tid}",
+                    kind="insert",
+                    target=tid,
+                    inputs=input_ids,
+                    file=filename,
+                    language="sas",
+                    line_start=base_line,
+                    snippet=("insert into " + s)[:400].strip(),
+                    confidence="low" if had_macro else "high",
+                    notes="PROC SQL insert"
+                          + (" — macro loop unrolled (assumed list values)"
+                             if had_macro else ""),
+                ))
+            if had_macro:
+                result.warnings.append(
+                    f"{filename}: PROC SQL INSERT at line {base_line} builds a "
+                    f"dataset name from a macro loop; inputs were unrolled over "
+                    f"assumed list values — verify downstream completeness."
+                )
         elif _SELECT_INTO.search(s) and tables:
             # SELECT ... INTO :macro — the table's values become macro-injected
             # code we can't resolve statically. Wire the source tables into a
@@ -245,6 +362,15 @@ def parse(code: str, filename: str = "<sas>") -> ParseResult:
     # 1b) Blank cards/datalines inline-data blocks (literal text, not statements).
     text = _blank_all(_DATALINES, text)
 
+    # 1c) Deterministic %let constant propagation: resolve dataset names that
+    # are built from macro variables (&LIB..&CTRY) to concrete tables so the
+    # lineage stitches end-to-end instead of silently dropping. Resolution is
+    # applied narrowly — only to macro-var-led tokens that would otherwise be
+    # dropped, never to names that merely embed a macro var (plot_&grp) — so
+    # already-correct output is unchanged. Loop lists are captured for unrolling
+    # the  %do / %scan  idiom later.
+    scalars, loop_lists = _collect_macro_vars(text)
+
     # 2) Flag dynamic inline macro execution (&code.;) before anything else.
     seen_macros: set[str] = set()
     for m in _MACRO_EXEC.finditer(text):
@@ -264,12 +390,13 @@ def parse(code: str, filename: str = "<sas>") -> ParseResult:
     for i, m in enumerate(list(_PROC_SQL.finditer(text))):
         inner = re.sub(r"(?is)^\s*proc\s+sql\b[^;]*;", "", m.group(0))
         inner = inner.rsplit("quit", 1)[0]
-        _parse_proc_sql(inner, _lineno(text, m.start()), filename, result, i, macro_defs)
+        _parse_proc_sql(inner, _lineno(text, m.start()), filename, result, i,
+                        macro_defs, loop_lists)
         text = _blank_region(text, m.start(), m.end())
 
     # 4) DATA steps.
     for i, m in enumerate(_DATA_STEP.finditer(text)):
-        targets = [t for t in _dataset_tokens(m.group("targets"))
+        targets = [t for t in _dataset_tokens(m.group("targets"), scalars)
                    if t.lower() not in _SKIP]
         body = m.group("body")
         inputs: list[str] = []
@@ -277,8 +404,17 @@ def parse(code: str, filename: str = "<sas>") -> ParseResult:
         for im in _INPUT_STMT.finditer(body):
             if im.group("kw").lower() == "merge":
                 kind = "merge"
-            inputs.extend(_dataset_tokens(im.group("ds")))
+            inputs.extend(_dataset_tokens(im.group("ds"), scalars))
         if not targets:
+            # Surface the gap instead of silently dropping: a DATA step whose
+            # output name is built from an unresolved macro variable still
+            # represents a real write we could not place.
+            if "&" in m.group("targets"):
+                result.warnings.append(
+                    f"{filename}: DATA step at line {_lineno(text, m.start())} "
+                    f"writes a macro-built dataset name "
+                    f"({m.group('targets').strip()}) that could not be resolved "
+                    f"statically — skipped; lineage may be incomplete.")
             continue
         dynamic = "&" in body
         input_ids = [_register(result.datasets, s, filename) for s in inputs]
@@ -328,6 +464,35 @@ def parse(code: str, filename: str = "<sas>") -> ParseResult:
         if name == "sql":
             continue
         body = m.group("body")
+        if name in ("import", "csvimport"):
+            # proc import datafile="..." out=TABLE;  (external file -> dataset)
+            fm = _DATAFILE.search(body)
+            om = _OUT_OPT.search(body)
+            if fm and om:
+                path = _subst_scalars(fm.group("path"), scalars)
+                out = _subst_scalars(om.group("ds"), scalars)
+                in_id = _register(result.datasets, path, filename)
+                out_id = _register(result.datasets, out, filename)
+                if in_id != out_id:
+                    unresolved = "&" in (path + out)
+                    result.operations.append(Operation(
+                        id=f"{filename}:sas:import:{i}",
+                        kind="import", target=out_id, inputs=[in_id],
+                        file=filename, language="sas",
+                        line_start=_lineno(text, m.start()),
+                        snippet=m.group(0)[:300].strip(),
+                        confidence="medium",
+                        notes="proc import (file \u2192 table)"
+                              + ("; unresolved macro reference"
+                                 if unresolved else ""),
+                    ))
+                    if unresolved:
+                        result.warnings.append(
+                            f"{filename}: PROC IMPORT at line "
+                            f"{_lineno(text, m.start())} uses a macro-built file "
+                            f"or table name that could not be resolved — lineage "
+                            f"may be incomplete.")
+            continue
         din = _DATA_OPT.search(body)
         if not din:
             continue

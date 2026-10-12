@@ -12,6 +12,7 @@ best-effort list of output column names.
 from __future__ import annotations
 
 import logging
+import re
 
 import sqlglot
 from sqlglot import exp
@@ -209,75 +210,229 @@ def parse(code: str, filename: str = "<sql>", dialect: str = "") -> ParseResult:
     for idx, stmt in enumerate(statements):
         if stmt is None:
             continue
+        _emit_statement(stmt, f"{filename}:sql:{idx}", read, result, filename)
 
-        target_raw: str | None = None
-        select_scope: exp.Expression | None = None
-        kind = "unknown"
-        dtype_hint = "table"
-
-        if isinstance(stmt, exp.Create):
-            create_kind = (stmt.args.get("kind") or "TABLE").upper()
-            target_node = stmt.this
-            target_tbl = (target_node if isinstance(target_node, exp.Table)
-                          else target_node.find(exp.Table) if target_node else None)
-            if target_tbl is None:
-                continue
-            target_raw = _table_ref(target_tbl)
-            select_scope = stmt.expression
-            if create_kind == "VIEW":
-                kind, dtype_hint = "view", "view"
-            else:
-                kind = "ctas"
-
-        elif isinstance(stmt, exp.Insert):
-            target_node = stmt.this
-            target_tbl = (target_node if isinstance(target_node, exp.Table)
-                          else target_node.find(exp.Table) if target_node else None)
-            if target_tbl is None:
-                continue
-            target_raw = _table_ref(target_tbl)
-            select_scope = stmt.expression
-            kind = "insert"
-
-        elif isinstance(stmt, exp.Select):
-            into = stmt.args.get("into")
-            if into is None:
-                continue  # a bare SELECT produces no persisted dataset
-            into_tbl = into.find(exp.Table)
-            if into_tbl is None:
-                continue
-            target_raw = _table_ref(into_tbl)
-            select_scope = stmt
-            kind = "select"
-
-        else:
-            continue
-
-        if not target_raw:
-            continue
-
-        target_id = _register(result.datasets, target_raw, filename, dtype_hint)
-        source_ids = []
-        for src in _source_tables(select_scope):
-            sid, _, _ = split_name(src)
-            if sid == target_id:
-                continue
-            source_ids.append(_register(result.datasets, src, filename))
-
-        output_cols = _output_columns(select_scope)
-        op = Operation(
-            id=f"{filename}:sql:{idx}",
-            kind=kind,
-            target=target_id,
-            inputs=source_ids,
-            columns=output_cols,
-            column_map=_column_map(select_scope, output_cols, source_ids, read),
-            file=filename,
-            language="sql",
-            line_start=stmt.meta.get("line", 0) if stmt.meta else 0,
-            snippet=stmt.sql(dialect=read)[:600],
-            confidence="high",
-        )
-        result.operations.append(op)
+    # Recover lineage hidden inside dynamic SQL strings (DECLARE/SET + EXEC
+    # sp_executesql). The source/target tables are assembled at runtime from
+    # string variables; when those variables are literal we can resolve them
+    # deterministically rather than losing the dependency entirely.
+    _recover_dynamic_sql(code, filename, read, result)
 
     return result
+
+
+def _emit_statement(stmt: exp.Expression, op_id: str, read: str | None,
+                    result: ParseResult, filename: str, *,
+                    confidence: str = "high", note: str | None = None,
+                    line: int | None = None) -> None:
+    target_raw: str | None = None
+    select_scope: exp.Expression | None = None
+    kind = "unknown"
+    dtype_hint = "table"
+
+    if isinstance(stmt, exp.Create):
+        create_kind = (stmt.args.get("kind") or "TABLE").upper()
+        target_node = stmt.this
+        target_tbl = (target_node if isinstance(target_node, exp.Table)
+                      else target_node.find(exp.Table) if target_node else None)
+        if target_tbl is None:
+            return
+        target_raw = _table_ref(target_tbl)
+        select_scope = stmt.expression
+        if create_kind == "VIEW":
+            kind, dtype_hint = "view", "view"
+        else:
+            kind = "ctas"
+
+    elif isinstance(stmt, exp.Insert):
+        target_node = stmt.this
+        target_tbl = (target_node if isinstance(target_node, exp.Table)
+                      else target_node.find(exp.Table) if target_node else None)
+        if target_tbl is None:
+            return
+        target_raw = _table_ref(target_tbl)
+        select_scope = stmt.expression
+        kind = "insert"
+
+    elif isinstance(stmt, exp.Select):
+        into = stmt.args.get("into")
+        if into is None:
+            return  # a bare SELECT produces no persisted dataset
+        into_tbl = into.find(exp.Table)
+        if into_tbl is None:
+            return
+        target_raw = _table_ref(into_tbl)
+        select_scope = stmt
+        kind = "select"
+
+    else:
+        return
+
+    if not target_raw:
+        return
+
+    target_id = _register(result.datasets, target_raw, filename, dtype_hint)
+    source_ids = []
+    for src in _source_tables(select_scope):
+        sid, _, _ = split_name(src)
+        if sid == target_id:
+            continue
+        source_ids.append(_register(result.datasets, src, filename))
+
+    output_cols = _output_columns(select_scope)
+    result.operations.append(Operation(
+        id=op_id,
+        kind=kind,
+        target=target_id,
+        inputs=source_ids,
+        columns=output_cols,
+        column_map=_column_map(select_scope, output_cols, source_ids, read),
+        file=filename,
+        language="sql",
+        line_start=(line if line is not None
+                    else (stmt.meta.get("line", 0) if stmt.meta else 0)),
+        snippet=stmt.sql(dialect=read)[:600],
+        confidence=confidence,
+        notes=note,
+    ))
+
+
+# --- dynamic SQL recovery (DECLARE / SET string vars + EXEC sp_executesql) ---
+_DECLARE_ASSIGN = re.compile(r"(?is)^\s*DECLARE\s+@(\w+)\b[^=;]*?=\s*(.+)$")
+_DECLARE_ONLY = re.compile(r"(?is)^\s*DECLARE\s+@(\w+)\b")
+_SET_ASSIGN = re.compile(r"(?is)^\s*SET\s+@(\w+)\s*=\s*(.+)$")
+_EXEC_VAR = re.compile(
+    r"(?is)\bexec(?:ute)?\b\s*\(?\s*(?:sp_executesql\s+)?@(\w+)")
+
+
+def _strip_sql_comments(s: str) -> str:
+    """Remove -- line comments and /* */ block comments, leaving string literals
+    untouched (so comment markers inside a quoted dynamic-SQL string survive)."""
+    out: list[str] = []
+    i, n = 0, len(s)
+    quote: str | None = None
+    while i < n:
+        c = s[i]
+        nxt = s[i + 1] if i + 1 < n else ""
+        if quote:
+            out.append(c)
+            if c == quote:
+                if nxt == quote:
+                    out.append(nxt)
+                    i += 2
+                    continue
+                quote = None
+            i += 1
+            continue
+        if c == "-" and nxt == "-":
+            while i < n and s[i] != "\n":
+                i += 1
+            continue
+        if c == "/" and nxt == "*":
+            i += 2
+            while i < n and not (s[i] == "*" and i + 1 < n and s[i + 1] == "/"):
+                i += 1
+            i += 2
+            continue
+        if c in ("'", '"'):
+            quote = c
+            out.append(c)
+            i += 1
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
+def _eval_concat(expr: str, variables: dict[str, str | None]) -> str | None:
+    """Evaluate a T-SQL string expression that is a concatenation of string
+    literals and @variables (``'a' + @v + 'b'``). Returns the resolved string,
+    or None if it contains anything we cannot resolve deterministically (an
+    unknown variable, a function call, etc.) — we never guess."""
+    expr = expr.strip().rstrip(";").strip()
+    parts: list[str] = []
+    i, n = 0, len(expr)
+    while i < n:
+        c = expr[i]
+        if c == "'":
+            j = i + 1
+            buf: list[str] = []
+            while j < n:
+                if expr[j] == "'":
+                    if j + 1 < n and expr[j + 1] == "'":   # '' escape
+                        buf.append("'")
+                        j += 2
+                        continue
+                    break
+                buf.append(expr[j])
+                j += 1
+            parts.append("".join(buf))
+            i = j + 1
+            continue
+        if c == "@":
+            m = re.match(r"@(\w+)", expr[i:])
+            if m:
+                val = variables.get(m.group(1).lower())
+                if val is None:
+                    return None
+                parts.append(val)
+                i += m.end()
+                continue
+        if c in "+ \t\r\n":
+            i += 1
+            continue
+        return None  # unexpected token — refuse to guess
+    return "".join(parts)
+
+
+def _recover_dynamic_sql(code: str, filename: str, read: str | None,
+                         result: ParseResult) -> None:
+    variables: dict[str, str | None] = {}
+    executed: list[str] = []
+    for raw in _split_statements(_strip_sql_comments(code)):
+        s = raw.strip()
+        m = _DECLARE_ASSIGN.match(s)
+        if m:
+            variables[m.group(1).lower()] = _eval_concat(m.group(2), variables)
+            continue
+        m = _DECLARE_ONLY.match(s)
+        if m:
+            variables.setdefault(m.group(1).lower(), None)
+            continue
+        m = _SET_ASSIGN.match(s)
+        if m:
+            val = _eval_concat(m.group(2), variables)
+            if val is not None:
+                variables[m.group(1).lower()] = val
+            continue
+        executed.extend(em.group(1).lower() for em in _EXEC_VAR.finditer(s))
+
+    recovered = [variables[v] for v in executed
+                 if variables.get(v)
+                 and re.search(r"(?is)\b(select|insert|update|merge|create)\b",
+                               variables[v] or "")]
+    if not recovered:
+        return
+
+    result.warnings.append(
+        f"{filename}: recovered {len(recovered)} dynamic SQL statement(s) run "
+        f"via EXEC/sp_executesql by resolving DECLARE/SET string variables "
+        f"deterministically — edges are marked low-confidence; verify the "
+        f"assumed variable values.")
+    for j, sql in enumerate(recovered):
+        parsed = None
+        for dial in ("tsql", read, "postgres", None):
+            try:
+                parsed = sqlglot.parse_one(sql, read=dial or None)
+                break
+            except Exception:
+                continue
+        if parsed is None:
+            result.warnings.append(
+                f"{filename}: a recovered dynamic SQL statement could not be "
+                f"parsed and was skipped.")
+            continue
+        _emit_statement(parsed, f"{filename}:sql:dyn:{j}", read, result, filename,
+                        confidence="low",
+                        note="recovered from dynamic SQL (EXEC sp_executesql)")
+
