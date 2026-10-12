@@ -36,6 +36,8 @@ def split_name(raw: str) -> tuple[str, str, str]:
 
     has_path = "/" in cleaned or "\\" in cleaned
     base = os.path.basename(cleaned.replace("\\", "/")) if has_path else cleaned
+    if has_path and base:
+        display = base
 
     root, ext = os.path.splitext(base)
     if ext.lower() in _FILE_EXTS:

@@ -9,9 +9,47 @@ graph shows physical-to-physical lineage (file/table -> file/table).
 from __future__ import annotations
 
 import ast
+import logging
+import re
+
+import sqlglot
+from sqlglot import exp
 
 from ..models import Dataset, Operation, ParseResult
 from .naming import make_dataset
+
+logging.getLogger("sqlglot").setLevel(logging.ERROR)
+
+_SELECT_RE = re.compile(r"\bselect\b.*\bfrom\b", re.I | re.S)
+
+
+def _sql_source_tables(sql: str) -> list[str]:
+    """Extract physical source tables from a SQL query string (read_sql).
+
+    Returns qualified names (schema.table) for every table referenced in FROM/
+    JOIN clauses, excluding names introduced by CTEs. Empty if unparseable.
+    """
+    expr = None
+    for dialect in ("postgres", None):
+        try:
+            expr = sqlglot.parse_one(sql, read=dialect)
+            break
+        except Exception:
+            continue
+    if expr is None:
+        return []
+    cte_names = {c.alias_or_name.lower() for c in expr.find_all(exp.CTE)}
+    names: list[str] = []
+    seen: set[str] = set()
+    for tbl in expr.find_all(exp.Table):
+        qualified = ".".join(p for p in (tbl.catalog, tbl.db, tbl.name) if p)
+        if not qualified or tbl.name.lower() in cte_names:
+            continue
+        if qualified.lower() not in seen:
+            seen.add(qualified.lower())
+            names.append(qualified)
+    return names
+
 
 _READ_PREFIX = "read_"
 _READ_METHODS = {"csv", "parquet", "json", "orc", "load", "table"}
@@ -110,6 +148,10 @@ class _Analyzer(ast.NodeVisitor):
                 ):
                     path = self._str_arg(node)
                     if path:
+                        if "sql" in attr and _SELECT_RE.search(path):
+                            tables = _sql_source_tables(path)
+                            if tables:
+                                return {self._register(t) for t in tables}
                         return {self._register(path)}
                 if attr in _COMBINE_FUNCS:
                     acc: set[str] = set()
