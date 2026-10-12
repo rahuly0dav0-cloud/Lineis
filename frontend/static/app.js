@@ -13,8 +13,14 @@ let authMode = "login";
 let lastProposals = [];
 const activeLangs = new Set(["sql", "sas", "python"]);
 
-const LANG_COLOR = { sql: "#3b82f6", sas: "#f59e0b", python: "#22c55e", "": "#8a97a8" };
-const ROLE_COLOR = { root: "#3b82f6", sink: "#22c55e", mid: "#a855f7", runtime: "#64748b" };
+const LANG_COLOR = { sql: "#5a93ff", sas: "#f6ad3c", python: "#2fd196", "": "#8e9aab" };
+const ROLE_COLOR = { root: "#5a93ff", sink: "#2fd196", mid: "#b280ff", runtime: "#64748b" };
+// Dark card fills per role — same visual language as the field-flow chart.
+const NODE_FILL = { root: "#101a2b", sink: "#0e2018", mid: "#191333", runtime: "#1a1f27" };
+const cardW = (label) => {
+  const longest = String(label || "").split("\n").reduce((m, l) => Math.max(m, l.length), 0);
+  return Math.max(94, Math.min(190, longest * 7 + 26));
+};
 const LINEAGE_VIEWS = { summary: "Summary", datasets: "Datasets", operations: "Operations", details: "Inspect", review: "Review" };
 const $ = (id) => document.getElementById(id);
 
@@ -24,6 +30,7 @@ const $ = (id) => document.getElementById(id);
 function showWorkspace() { $("home").hidden = true; $("workspace").hidden = false; }
 function showHome() {
   $("workspace").hidden = true; $("home").hidden = false;
+  closeColGraph();
   if (cy) { cy.destroy(); cy = null; }
   lastResult = null;
 }
@@ -89,16 +96,21 @@ async function loadBatchCards() {
 function cyStyle() {
   return [
     { selector: "node", style: {
-        "background-color": (n) => ROLE_COLOR[n.data("role")] || "#a855f7",
-        "label": "data(label)", "color": "#cdd7e4", "font-size": 11, "font-weight": 500,
-        "text-valign": "bottom", "text-margin-y": 6, "text-wrap": "ellipsis", "text-max-width": 130,
-        "width": 24, "height": 24, "border-width": 2, "border-color": "#0b0e13",
-        "shape": (n) => { const t = n.data("type");
-          return t === "file" ? "round-rectangle" : t === "view" ? "diamond"
-            : t === "chart" ? "hexagon" : t === "report" ? "tag"
-            : t === "process" ? "barrel" : "ellipse"; } } },
-    { selector: "node.hl", style: { "border-color": "#ec0000", "border-width": 3,
-        "width": 30, "height": 30, "font-weight": 700, "color": "#fff" } },
+        "shape": "round-rectangle",
+        "background-color": (n) => NODE_FILL[n.data("role")] || "#191333",
+        "border-width": 2, "border-color": (n) => ROLE_COLOR[n.data("role")] || "#b280ff",
+        "label": "data(label)", "color": "#e8edf5", "font-size": 11, "font-weight": 600,
+        "text-valign": "center", "text-halign": "center",
+        "text-wrap": "wrap", "text-max-width": 150,
+        "width": (n) => cardW(n.data("label")), "height": 40, "padding": 6 } },
+    { selector: "node.hl", style: { "border-color": "#ec0000", "border-width": 2.5, "color": "#fff" } },
+    // Column-trace mode: a participating card shows the field name under the
+    // dataset name; the focused field's card is filled red.
+    { selector: "node.colmode", style: {
+        "label": "data(colBadge)", "text-max-width": 168, "font-size": 10.5,
+        "width": (n) => cardW(n.data("colBadge")), "height": 50 } },
+    { selector: "node.colfocus", style: {
+        "border-color": "#ec0000", "border-width": 3, "background-color": "#2a1113", "color": "#fff" } },
     { selector: "edge", style: {
         "width": 2, "line-color": (e) => LANG_COLOR[e.data("language")] || "#8a97a8",
         "target-arrow-color": (e) => LANG_COLOR[e.data("language")] || "#8a97a8",
@@ -106,21 +118,28 @@ function cyStyle() {
         "line-style": (e) => e.data("confidence") === "low" ? "dashed" : "solid", "opacity": 0.8 } },
     { selector: "edge.hl", style: { "width": 3.5, "opacity": 1, "z-index": 99 } },
     { selector: "edge.ai-edge", style: {
-        "line-color": "#f59e0b", "target-arrow-color": "#f59e0b",
+        "line-color": "#f6ad3c", "target-arrow-color": "#f6ad3c",
         "target-arrow-shape": "triangle", "line-style": "solid",
         "width": 2.5, "opacity": 0.95, "z-index": 50 } },
-    { selector: "node.ai-node", style: { "border-color": "#f59e0b", "border-width": 2.5 } },
-    { selector: ".faded", style: { "opacity": 0.08, "text-opacity": 0.08 } },
+    { selector: "node.ai-node", style: { "border-color": "#f6ad3c", "border-width": 2.5 } },
+    { selector: ".faded", style: { "opacity": 0.1, "text-opacity": 0.1 } },
     { selector: ".hidden", style: { "display": "none" } },
   ];
 }
 
+// Shared dagre layout — wider gaps than the old dot nodes need, since the
+// datasets now render as full cards.
+function dagreLayout() {
+  return { name: "dagre", rankDir, nodeSep: 34, rankSep: 110, edgeSep: 12, padding: 40 };
+}
+
 function render(data) {
   lastResult = data;
+  closeColGraph();
   if (cy) cy.destroy();
   cy = cytoscape({
     container: $("graph"), elements: data.elements, style: cyStyle(),
-    layout: { name: "dagre", rankDir, nodeSep: 26, rankSep: 85, edgeSep: 10, padding: 36 },
+    layout: dagreLayout(),
     wheelSensitivity: 0.25, minZoom: 0.2, maxZoom: 2.5,
   });
   cy.on("tap", "node", (e) => {
@@ -168,9 +187,12 @@ function renderSummary(data) {
   const s = data.stats || {};
   const c = confidenceStats(data);
   const cells = [
-    ["datasets", "Datasets"], ["operations", "Transformations"],
-    ["foundation", "Source datasets"], ["outputs", "Final outputs"],
-    ["intermediate", "Intermediate"], ["files", "Code files"],
+    ["datasets", "Datasets", "datasets", ""],
+    ["operations", "Transformations", "operations", ""],
+    ["foundation", "Source datasets", "datasets", "root"],
+    ["outputs", "Final outputs", "datasets", "sink"],
+    ["intermediate", "Intermediate", "datasets", "mid"],
+    ["files", "Code files", "operations", ""],
   ];
   const langs = s.by_language || {};
   const maxL = Math.max(1, ...Object.values(langs));
@@ -181,7 +203,9 @@ function renderSummary(data) {
 
   $("paneSummary").innerHTML = `
     <div class="stat-grid">
-      ${cells.map(([k, l]) => `<div class="stat"><div class="n">${s[k] ?? 0}</div><div class="l">${l}</div></div>`).join("")}
+      ${cells.map(([k, l, view, group]) => `<button class="stat link" data-goto="${view}"${group ? ` data-group="${group}"` : ""} title="View ${l.toLowerCase()}">
+        <div class="n">${s[k] ?? 0}</div><div class="l">${l}</div>
+        <span class="stat-go" aria-hidden="true">↗</span></button>`).join("")}
     </div>
     <div class="sec-title">Transformations by language</div>
     ${langBars || '<p class="muted empty">No transformations detected.</p>'}
@@ -198,6 +222,9 @@ function renderSummary(data) {
       <span><b style="color:var(--accent)">${c.low}</b> low</span>
     </div>
     <p class="muted empty" style="margin-top:10px"><b>Evidence</b> = share of transformations backed by a file, line and code snippet. <b>Confidence</b> is a weighted score of how reliably each mapping was resolved (SQL parses highest; SAS/Python macros and dynamic code score lower and are candidates for the AI review step).</p>`;
+  $("paneSummary").querySelectorAll(".stat.link").forEach((el) => {
+    el.onclick = () => gotoView(el.dataset.goto, el.dataset.group);
+  });
 }
 function confidenceStats(data) {
   const ops = data.operations || [];
@@ -230,7 +257,7 @@ function renderDatasets(data) {
   const ds = data.datasets || {};
   let html = "";
   for (const [role, label, ids] of groups) {
-    html += `<div class="grouplabel"><span class="dot ${role}"></span>${label}<span class="cnt">${ids.length}</span></div>`;
+    html += `<div class="grouplabel" data-role="${role}"><span class="dot ${role}"></span>${label}<span class="cnt">${ids.length}</span></div>`;
     html += ids.map((id) => {
       const d = ds[id] || { name: id, type: "" };
       const nc = (d.columns || []).length;
@@ -336,6 +363,8 @@ function renderIntegrity(ig) {
 // Selection + details
 // ---------------------------------------------------------------------------
 function selectNode(node) {
+  closeColGraph();
+  clearColMode();
   highlightNeighbourhood(node);
   const d = node.data();
   const ds = (lastResult.datasets || {})[d.id] || {};
@@ -343,17 +372,23 @@ function selectNode(node) {
   const down = node.outgoers("node").map((n) => n.id());
   const producing = (lastResult.operations || []).filter((o) => o.target === d.id);
   const cols = ds.columns || [];
+  const declared = cols.filter((c) => c.source === "declared").length;
   const schemaHtml = cols.length ? `
     <div class="drow">
-      <div class="k">Schema · ${cols.length} column${cols.length > 1 ? "s" : ""} <span class="k-sub">from code</span></div>
+      <div class="k">Schema · ${cols.length} column${cols.length > 1 ? "s" : ""} <span class="k-sub">${declared ? "declared in code" : "derived from SELECT"} · click a field to trace it</span></div>
       <div class="schema">
-        ${cols.map((c) => `<div class="col-row">
-          <span class="col-name" title="${esc(c.name)}">${esc(c.name)}</span>
+        ${cols.map((c) => `<div class="col-row clickable" data-col="${esc(c.name)}" title="Trace ${esc(c.name)} to source &amp; impact">
+          <span class="col-name">${esc(c.name)}</span>
           ${c.dtype ? `<span class="col-type">${esc(c.dtype)}</span>` : ""}
           <span class="col-src ${c.source}" title="${c.source === "declared" ? "Declared in a CREATE TABLE statement" : "Derived from a SELECT projection"}">${c.source}</span>
+          <span class="col-trace" aria-hidden="true">⤳</span>
         </div>`).join("")}
       </div>
-    </div>` : "";
+    </div>` : `
+    <div class="drow">
+      <div class="k">Schema</div>
+      <div class="schema-empty">No column-level schema was found in the code for this dataset${d.type === "file" ? " — it is read as a raw file without an explicit column list" : ""}.</div>
+    </div>`;
 
   $("paneDetails").innerHTML = `
     <div class="d-head">
@@ -370,19 +405,23 @@ function selectNode(node) {
         <span class="tb-txt"><b>Trace impact</b><small>What depends on this</small></span>
       </button>
     </div>
+    ${schemaHtml}
     <div class="drow"><div class="k">Source file</div><div class="v">${esc(d.source_file || "—")}</div></div>
     <div class="drow"><div class="k">Upstream (${up.length})</div><div class="v chiplist">${chips(up)}</div></div>
     <div class="drow"><div class="k">Downstream (${down.length})</div><div class="v chiplist">${chips(down)}</div></div>
-    ${schemaHtml}
     ${producing.length ? `<div class="drow"><div class="k">Produced by</div>${producing.map(opEvidence).join("")}</div>` : ""}`;
 
   wireChips($("paneDetails"));
+  $("paneDetails").querySelectorAll(".col-row[data-col]").forEach((el) =>
+    el.onclick = () => selectColumn(d.id, el.dataset.col));
   $("traceSrc").onclick = () => tracePath(node, "in");
   $("traceImp").onclick = () => tracePath(node, "out");
   switchView("details");
 }
 
 function selectEdge(edge) {
+  closeColGraph();
+  clearColMode();
   cy.elements().removeClass("hl faded");
   edge.addClass("hl"); edge.connectedNodes().addClass("hl");
   const d = edge.data();
@@ -420,6 +459,332 @@ function wireChips(root) {
 }
 
 // ---------------------------------------------------------------------------
+// Column-level lineage (field trace to source / impact)
+// Built from each operation's column_map ({target_column, source_columns}).
+// Only SQL ops expose field-level provenance, so a trace honestly stops at the
+// first SAS/Python hop rather than guessing.
+// ---------------------------------------------------------------------------
+function dsLabel(id) { return ((lastResult.datasets || {})[id] || {}).name || id; }
+
+function producerOps(dsId) {
+  return (lastResult.operations || []).filter((o) => o.target === dsId);
+}
+function colParents(dsId, col) {
+  const lc = (col || "").toLowerCase();
+  const out = [];
+  for (const o of (lastResult.operations || [])) {
+    if (o.target !== dsId) continue;
+    for (const ce of (o.column_map || [])) {
+      if ((ce.target_column || "").toLowerCase() !== lc) continue;
+      for (const sc of (ce.source_columns || [])) {
+        const i = sc.lastIndexOf(".");
+        if (i < 0) continue;
+        out.push({ dsId: sc.slice(0, i), col: sc.slice(i + 1) });
+      }
+    }
+  }
+  return dedupeCols(out);
+}
+function colChildren(dsId, col) {
+  const needle = (dsId + "." + col).toLowerCase();
+  const out = [];
+  for (const o of (lastResult.operations || [])) {
+    for (const ce of (o.column_map || [])) {
+      if ((ce.source_columns || []).some((s) => s.toLowerCase() === needle))
+        out.push({ dsId: o.target, col: ce.target_column });
+    }
+  }
+  return dedupeCols(out);
+}
+function dedupeCols(arr) {
+  const seen = new Set(); const out = [];
+  for (const x of arr) {
+    const k = (x.dsId + "." + x.col).toLowerCase();
+    if (!seen.has(k)) { seen.add(k); out.push(x); }
+  }
+  return out;
+}
+function traceColUp(dsId, col) {
+  const rows = []; const seen = new Set();
+  (function walk(id, c, depth) {
+    const key = (id + "." + c).toLowerCase();
+    const parents = colParents(id, c);
+    const kind = parents.length ? "node" : (producerOps(id).length ? "opaque" : "origin");
+    const cycle = seen.has(key);
+    rows.push({ dsId: id, col: c, depth, kind, cycle });
+    if (cycle || depth > 30) return;
+    seen.add(key);
+    for (const p of parents) walk(p.dsId, p.col, depth + 1);
+  })(dsId, col, 0);
+  return rows;
+}
+function traceColDown(dsId, col) {
+  const rows = []; const seen = new Set();
+  (function walk(id, c, depth) {
+    const key = (id + "." + c).toLowerCase();
+    const children = colChildren(id, c);
+    const cycle = seen.has(key);
+    rows.push({ dsId: id, col: c, depth, leaf: !children.length, cycle });
+    if (cycle || depth > 30) return;
+    seen.add(key);
+    for (const ch of children) walk(ch.dsId, ch.col, depth + 1);
+  })(dsId, col, 0);
+  return rows;
+}
+function opaqueLang(dsId) {
+  const m = { sql: "SQL", sas: "SAS", python: "Python" };
+  const langs = [...new Set(producerOps(dsId).map((o) => o.language))].map((l) => m[l] || l);
+  return langs.join(" / ") || "upstream code";
+}
+function colNodeRow(r, dir, isFocus) {
+  let badge = "";
+  if (r.cycle) badge = `<span class="ct-badge cycle">cycle</span>`;
+  else if (dir === "up" && r.kind === "origin") badge = `<span class="ct-badge origin">source field</span>`;
+  else if (dir === "up" && r.kind === "opaque") badge = `<span class="ct-badge opaque">trace ends · ${esc(opaqueLang(r.dsId))}</span>`;
+  const arm = r.depth > 0 ? `<span class="ct-arm">↳</span>` : "";
+  return `<div class="ct-row" style="--d:${r.depth}">
+    ${arm}
+    <button class="ct-node${isFocus ? " focus" : ""}" data-ds="${esc(r.dsId)}" data-col="${esc(r.col)}">
+      <span class="ct-ds">${esc(dsLabel(r.dsId))}</span><span class="ct-sep">.</span><span class="ct-col">${esc(r.col)}</span>
+    </button>${badge}</div>`;
+}
+function renderColTree(rows, dir) {
+  if (rows.length <= 1) {
+    const only = rows[0] || {};
+    if (dir === "up") {
+      return `<div class="ct-note">${only.kind === "opaque"
+        ? `Upstream of this field is built by ${esc(opaqueLang(only.dsId))} code, which doesn't expose field-level lineage — the column trace stops here.`
+        : "This is an original field — it is not derived from any upstream column."}</div>`;
+    }
+    return `<div class="ct-note">No downstream field consumes this column (at field level).</div>`;
+  }
+  return `<div class="coltree">${rows.map((r, i) => colNodeRow(r, dir, i === 0)).join("")}</div>`;
+}
+function centerNode(id) {
+  if (!cy) return;
+  const n = cy.getElementById(id);
+  if (n && n.nonempty()) {
+    highlightNeighbourhood(n);
+    cy.animate({ center: { eles: n }, zoom: 1.2 }, { duration: 260 });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Field-level lineage FLOW — a dedicated Cytoscape chart that renders a single
+// column's provenance + impact as a left-to-right graph (sources → selected
+// field → downstream), so the flow is readable instead of being buried in the
+// table graph. It replaces the table canvas while a column is being inspected.
+// ---------------------------------------------------------------------------
+let colCy = null;
+let colFocus = { dsId: null, col: null };
+const COL_ROLE = {
+  focus:  { bg: "#2a1113", border: "#ec0000" },
+  origin: { bg: "#0f2619", border: "#2fd196" },
+  opaque: { bg: "#241d10", border: "#f6ad3c" },
+  up:     { bg: "#111a28", border: "#5a93ff" },
+  down:   { bg: "#0f2019", border: "#2fd196" },
+};
+const colFieldId = (dsId, col) => dsId + "::@@::" + col;
+
+function buildColElements(dsId, colName) {
+  const nodes = new Map();
+  const edges = new Map();
+  const focusId = colFieldId(dsId, colName);
+  const ROLE_PRI = { up: 0, down: 0, opaque: 2, origin: 2, focus: 3 };
+  const addNode = (d, c, role) => {
+    const id = colFieldId(d, c);
+    const ex = nodes.get(id);
+    if (!ex) {
+      const ds = dsLabel(d);
+      const w = Math.max(96, Math.min(234, Math.max(c.length, ds.length + 3) * 7 + 22));
+      nodes.set(id, { id, dsId: d, col: c, role, w });
+    } else if ((ROLE_PRI[role] || 0) > (ROLE_PRI[ex.role] || 0)) {
+      ex.role = role;
+    }
+  };
+  const addEdge = (sid, tid, side) => {
+    const k = sid + ">" + tid;
+    if (!edges.has(k)) edges.set(k, { source: sid, target: tid, side });
+  };
+  const seenU = new Set();
+  (function up(d, c, depth) {
+    const id = colFieldId(d, c);
+    if (seenU.has(id) || depth > 30) return;
+    seenU.add(id);
+    const parents = colParents(d, c);
+    const kind = parents.length ? "up" : (producerOps(d).length ? "opaque" : "origin");
+    addNode(d, c, id === focusId ? "focus" : kind);
+    for (const p of parents) {
+      addNode(p.dsId, p.col, "up");
+      addEdge(colFieldId(p.dsId, p.col), id, "up");
+      up(p.dsId, p.col, depth + 1);
+    }
+  })(dsId, colName, 0);
+  const seenD = new Set();
+  (function down(d, c, depth) {
+    const id = colFieldId(d, c);
+    if (seenD.has(id) || depth > 30) return;
+    seenD.add(id);
+    const children = colChildren(d, c);
+    addNode(d, c, id === focusId ? "focus" : "down");
+    for (const ch of children) {
+      addNode(ch.dsId, ch.col, "down");
+      addEdge(id, colFieldId(ch.dsId, ch.col), "down");
+      down(ch.dsId, ch.col, depth + 1);
+    }
+  })(dsId, colName, 0);
+  addNode(dsId, colName, "focus");
+
+  const els = [];
+  for (const n of nodes.values())
+    els.push({ data: { id: n.id, label: n.col + "\n" + dsLabel(n.dsId), col: n.col, dsId: n.dsId, role: n.role, w: n.w } });
+  let i = 0;
+  for (const e of edges.values())
+    els.push({ data: { id: "ce" + (i++), source: e.source, target: e.target, side: e.side } });
+  return els;
+}
+
+function colCyStyle() {
+  return [
+    { selector: "node", style: {
+        "background-color": (n) => (COL_ROLE[n.data("role")] || COL_ROLE.up).bg,
+        "border-color": (n) => (COL_ROLE[n.data("role")] || COL_ROLE.up).border,
+        "border-width": (n) => (n.data("role") === "focus" ? 3 : 2),
+        "shape": "round-rectangle", "label": "data(label)", "color": "#eef2f8",
+        "font-size": 11.5, "font-weight": 600, "text-wrap": "wrap",
+        "text-max-width": (n) => n.data("w") - 16, "line-height": 1.3,
+        "text-valign": "center", "text-halign": "center",
+        "width": "data(w)", "height": 48, "padding": 6 } },
+    { selector: "edge", style: {
+        "width": 2.2,
+        "line-color": (e) => (e.data("side") === "down" ? "#2fd196" : "#5a93ff"),
+        "target-arrow-color": (e) => (e.data("side") === "down" ? "#2fd196" : "#5a93ff"),
+        "target-arrow-shape": "triangle", "curve-style": "bezier",
+        "arrow-scale": 1.05, "opacity": 0.92 } },
+  ];
+}
+
+function renderColGraph(dsId, colName) {
+  const ds = (lastResult.datasets || {})[dsId] || { name: dsId };
+  $("cgCol").textContent = colName;
+  $("cgDs").textContent = "field in " + (ds.name || dsId);
+  const els = buildColElements(dsId, colName);
+  if (colCy) colCy.destroy();
+  colCy = cytoscape({
+    container: $("colGraph"), elements: els, style: colCyStyle(),
+    layout: { name: "dagre", rankDir: "LR", nodeSep: 22, rankSep: 74, edgeSep: 10, padding: 30 },
+    wheelSensitivity: 0.25, minZoom: 0.25, maxZoom: 2.5,
+  });
+  colCy.on("tap", "node", (e) => {
+    const d = e.target.data();
+    selectColumn(d.dsId, d.col);
+  });
+  colCy.ready(() => colCy.fit(undefined, 46));
+}
+
+function openColGraph(dsId, colName) {
+  const overlay = $("colOverlay");
+  if (!overlay) return;
+  colFocus = { dsId, col: colName };
+  overlay.hidden = false;
+  const legend = $("wsLegend"); if (legend) legend.hidden = true;
+  renderColGraph(dsId, colName);
+}
+
+function closeColGraph() {
+  const overlay = $("colOverlay");
+  if (overlay && !overlay.hidden) {
+    overlay.hidden = true;
+    const legend = $("wsLegend"); if (legend) legend.hidden = false;
+  }
+  if (colCy) { colCy.destroy(); colCy = null; }
+}
+
+// ---------------------------------------------------------------------------
+// In-table column highlight — the "combined" view: rather than a separate
+// chart, dim every unrelated route in the main graph and light up just the
+// datasets this field flows through, writing the field name onto each card.
+// ---------------------------------------------------------------------------
+function columnFootprint(dsId, col) {
+  const fields = new Map();   // dsId -> Set(column)
+  const edges = new Set();    // "src>dst" dataset-level hops that carry the field
+  const addF = (d, c) => { if (!fields.has(d)) fields.set(d, new Set()); fields.get(d).add(c); };
+  const seenU = new Set();
+  (function up(d, c) {
+    const k = d + "::" + c;
+    if (seenU.has(k)) return; seenU.add(k);
+    addF(d, c);
+    for (const p of colParents(d, c)) { if (p.dsId !== d) edges.add(p.dsId + ">" + d); up(p.dsId, p.col); }
+  })(dsId, col);
+  const seenD = new Set();
+  (function down(d, c) {
+    const k = d + "::" + c;
+    if (seenD.has(k)) return; seenD.add(k);
+    addF(d, c);
+    for (const ch of colChildren(d, c)) { if (ch.dsId !== d) edges.add(d + ">" + ch.dsId); down(ch.dsId, ch.col); }
+  })(dsId, col);
+  return { fields, edges };
+}
+function clearColMode() {
+  if (!cy) return;
+  cy.nodes("[colBadge]").forEach((n) => n.removeData("colBadge"));
+  cy.elements().removeClass("colmode colfocus");
+}
+function highlightColumnInGraph(dsId, colName) {
+  if (!cy) return;
+  const fp = columnFootprint(dsId, colName);
+  clearColMode();
+  cy.elements().removeClass("hl faded");
+  cy.elements().addClass("faded");
+  fp.fields.forEach((cols, id) => {
+    const n = cy.getElementById(id);
+    if (n.empty()) return;
+    const name = ((lastResult.datasets || {})[id] || {}).name || id;
+    n.data("colBadge", name + "\n◦ " + [...cols].join(", "));
+    n.removeClass("faded").addClass("colmode");
+  });
+  const fn = cy.getElementById(dsId);
+  if (fn.nonempty()) fn.addClass("colfocus");
+  cy.edges().forEach((e) => {
+    if (fp.edges.has(e.data("source") + ">" + e.data("target")))
+      e.removeClass("faded").addClass("hl");
+  });
+  const hlNodes = cy.nodes(".colmode");
+  if (hlNodes.nonempty()) cy.animate({ fit: { eles: hlNodes, padding: 70 } }, { duration: 320 });
+}
+
+function selectColumn(dsId, colName) {
+  colFocus = { dsId, col: colName };
+  const ds = (lastResult.datasets || {})[dsId] || { name: dsId };
+  const meta = (ds.columns || []).find((c) => (c.name || "").toLowerCase() === (colName || "").toLowerCase()) || {};
+  const up = traceColUp(dsId, colName);
+  const down = traceColDown(dsId, colName);
+  highlightColumnInGraph(dsId, colName);
+  if (!$("colOverlay").hidden) renderColGraph(dsId, colName);
+  $("paneDetails").innerHTML = `
+    <div class="d-head colhead">
+      <button class="col-back" id="colBack" title="Back to ${esc(ds.name)}">←</button>
+      <span class="bubble" style="background:var(--sql)">⛓</span>
+      <div><h3 class="mono">${esc(colName)}</h3>
+        <span class="role">Field in ${esc(ds.name)} · ${esc(meta.source || "derived")}</span></div>
+    </div>
+    <p class="ct-legend muted">This field is lit up <b>in the table graph</b> — source columns → this field → everything it feeds, with the other routes dimmed and each card tagged with its field. It can be <b>narrower than table lineage</b>.</p>
+    <button class="btn trace-btn focuschart" id="openColChart">
+      <span class="tb-ico">⤢</span>
+      <span class="tb-txt"><b>Open focus chart</b><small>See just this field's flow as a clean diagram</small></span>
+    </button>
+    <div class="sec-title">↞ Trace to source</div>
+    ${renderColTree(up, "up")}
+    <div class="sec-title">↠ Trace impact</div>
+    ${renderColTree(down, "down")}`;
+  $("colBack").onclick = () => focusNode(dsId);
+  $("openColChart").onclick = () => openColGraph(dsId, colName);
+  $("paneDetails").querySelectorAll(".ct-node[data-ds]").forEach((el) =>
+    el.onclick = () => selectColumn(el.dataset.ds, el.dataset.col));
+  switchView("details");
+}
+
+// ---------------------------------------------------------------------------
 // Highlighting / tracing
 // ---------------------------------------------------------------------------
 function highlightNeighbourhood(node) {
@@ -429,6 +794,7 @@ function highlightNeighbourhood(node) {
   hood.removeClass("faded").addClass("hl");
 }
 function tracePath(node, dir) {
+  clearColMode();
   cy.elements().removeClass("hl faded");
   let coll = node;
   const walk = dir === "in"
@@ -449,7 +815,7 @@ function tracePath(node, dir) {
   node.addClass("hl");
   fit(coll.nodes());
 }
-function clearHighlight() { if (cy) cy.elements().removeClass("hl faded"); }
+function clearHighlight() { if (cy) { clearColMode(); cy.elements().removeClass("hl faded"); } }
 
 function focusNode(id) {
   if (!cy) return;
@@ -491,6 +857,12 @@ function runSearch(q) {
 // ---------------------------------------------------------------------------
 // Left-rail view switching (Lineage sub-views + History)
 // ---------------------------------------------------------------------------
+function gotoView(view, group) {
+  switchView(view);
+  if (!group) return;
+  const label = $("paneDatasets").querySelector(`.grouplabel[data-role="${group}"]`);
+  if (label) label.scrollIntoView({ behavior: "smooth", block: "start" });
+}
 function switchView(name) {
   document.querySelectorAll(".rail-item").forEach((t) => t.classList.toggle("active", t.dataset.view === name));
   const isHistory = name === "history";
@@ -859,7 +1231,7 @@ function acceptProposal(idx) {
   if (!p || !cy) return;
   const tId = ensureGraphNode(p.proposed_target || `ai-target-${idx}`);
   (p.proposed_inputs || []).forEach((inp) => addAiEdge(ensureGraphNode(inp), tId, p));
-  cy.layout({ name: "dagre", rankDir, nodeSep: 26, rankSep: 85, edgeSep: 10, padding: 36 }).run();
+  cy.layout(dagreLayout()).run();
   markProposal(idx, "accepted");
 }
 
@@ -947,7 +1319,9 @@ function initEvents() {
     brandHome.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); showHome(); } };
   }
 
-  document.querySelectorAll(".rail-item").forEach((t) => t.onclick = () => switchView(t.dataset.view));
+  document.querySelectorAll(".rail-item").forEach((t) => t.onclick = () => { closeColGraph(); switchView(t.dataset.view); });
+  $("cgBack") && ($("cgBack").onclick = () => closeColGraph());
+  $("cgFit") && ($("cgFit").onclick = () => colCy && colCy.animate({ fit: { padding: 46 } }, { duration: 250 }));
   document.querySelectorAll(".chip-toggle").forEach((c) => c.onclick = () => {
     const lang = c.dataset.lang;
     if (activeLangs.has(lang)) activeLangs.delete(lang); else activeLangs.add(lang);
@@ -958,7 +1332,7 @@ function initEvents() {
   $("search").oninput = (e) => runSearch(e.target.value);
   $("layoutBtn").onclick = () => {
     rankDir = rankDir === "LR" ? "TB" : "LR";
-    if (cy) cy.layout({ name: "dagre", rankDir, nodeSep: 26, rankSep: 85, padding: 36 }).run();
+    if (cy) cy.layout(dagreLayout()).run();
   };
   $("fitBtn").onclick = () => cy && cy.animate({ fit: { padding: 40 } }, { duration: 250 });
   $("resetHl").onclick = clearHighlight;

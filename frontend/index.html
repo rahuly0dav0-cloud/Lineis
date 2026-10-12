@@ -40,7 +40,8 @@
         <div id="historyList" class="history-list"></div>
       </section>
 
-      <h1>Trace every regulatory number<br />back to its source — automatically.</h1>
+      <div class="eyebrow"><span class="dot-live"></span> Layer&nbsp;1 Lineage Engine · SQL · SAS · Python</div>
+      <h1>Trace every regulatory number<br />back to <span class="grad">its true source</span> — automatically.</h1>
       <p class="lede">
         Point Lineis at your SQL, SAS and Python. It parses the code, reconstructs
         field- and table-level lineage across languages and platforms, and publishes
@@ -182,6 +183,32 @@
           </div>
           <div id="historyListWs" class="history-list"></div>
         </section>
+
+        <!-- Dedicated field-level lineage flow — opened when a column is traced.
+             Covers the whole main area with a chart of just the columns that feed
+             (and are fed by) the selected field, so the flow is readable. -->
+        <div id="colOverlay" class="col-overlay" hidden>
+          <div class="cg-bar">
+            <button class="cg-back" id="cgBack" title="Back to the table graph">← Table graph</button>
+            <div class="cg-title">
+              <span class="cg-chain">⛓</span>
+              <div class="cg-title-txt">
+                <strong id="cgCol" class="mono">column</strong>
+                <span id="cgDs">dataset</span>
+              </div>
+            </div>
+            <div class="cg-legend">
+              <span><i class="cgl focus"></i>Selected</span>
+              <span><i class="cgl origin"></i>Source field</span>
+              <span><i class="cgl opaque"></i>Boundary · SAS/Python</span>
+              <span class="cgl-sep"></span>
+              <span><i class="cgl-ln up"></i>to&nbsp;source</span>
+              <span><i class="cgl-ln down"></i>impact</span>
+            </div>
+            <button class="cg-fit icon-btn" id="cgFit" title="Fit to screen">⤢</button>
+          </div>
+          <div id="colGraph" class="cg-canvas"></div>
+        </div>
       </div>
 
       <div class="legend" id="wsLegend">
