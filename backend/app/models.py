@@ -11,12 +11,21 @@ from typing import Dict, List, Optional
 from pydantic import BaseModel, Field
 
 
+class Column(BaseModel):
+    """A single field known for a dataset, from whatever the code reveals."""
+
+    name: str
+    dtype: Optional[str] = None   # declared SQL/DDL type, when the code gives one
+    source: str = "derived"       # declared (DDL) | derived (SELECT projection)
+
+
 class Dataset(BaseModel):
     id: str                      # normalized key used for cross-file stitching
     name: str                    # human-readable / qualified name for display
     type: str = "table"          # table | view | file | dataframe | unknown
     namespace: str = "default"
     source_file: Optional[str] = None
+    columns: List[Column] = Field(default_factory=list)  # best-effort schema
 
 
 class ColumnEdge(BaseModel):
@@ -53,6 +62,22 @@ class ParseResult(BaseModel):
             existing = self.datasets.get(ds_id)
             if existing is None or (existing.type in ("unknown", "dataframe")
                                     and ds.type not in ("unknown", "dataframe")):
+                if existing is not None and existing.columns:
+                    ds.columns = _merge_columns(ds.columns, existing.columns)
                 self.datasets[ds_id] = ds
+            elif ds.columns:
+                existing.columns = _merge_columns(existing.columns, ds.columns)
         self.operations.extend(other.operations)
         self.warnings.extend(other.warnings)
+
+
+def _merge_columns(primary: List[Column], extra: List[Column]) -> List[Column]:
+    """Union two column lists, keeping the first occurrence of each name (so a
+    declared column with its DDL type wins over a later derived mention)."""
+    out = list(primary)
+    seen = {c.name.lower() for c in out}
+    for c in extra:
+        if c.name.lower() not in seen:
+            out.append(c)
+            seen.add(c.name.lower())
+    return out

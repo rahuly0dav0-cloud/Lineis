@@ -11,7 +11,29 @@ from typing import Any
 
 import networkx as nx
 
-from .models import ParseResult
+from .models import Column, ParseResult
+
+
+def _attach_columns(result: ParseResult) -> None:
+    """Enrich each dataset with the columns the code reveals.
+
+    Declared DDL columns (with types) are already set by the parsers. Here we
+    add columns *derived* from each operation's output projection (SELECT list,
+    CTAS/view/insert targets) to the dataset they produce — so a table's schema
+    reflects whatever the transformations actually populate."""
+    for op in result.operations:
+        ds = result.datasets.get(op.target)
+        if ds is None:
+            continue
+        have = {c.name.lower() for c in ds.columns}
+        for name in op.columns:
+            if not name or name == "*":
+                continue
+            key = name.lower()
+            if key in have:
+                continue
+            ds.columns.append(Column(name=name, source="derived"))
+            have.add(key)
 
 
 def build_graph(result: ParseResult) -> nx.DiGraph:
@@ -30,6 +52,7 @@ def build_graph(result: ParseResult) -> nx.DiGraph:
 
 
 def analyze(result: ParseResult) -> dict[str, Any]:
+    _attach_columns(result)
     g = build_graph(result)
 
     roots = sorted(n for n in g.nodes if g.in_degree(n) == 0 and g.out_degree(n) > 0)
@@ -214,6 +237,7 @@ def _to_cytoscape(g: nx.DiGraph, roots: set[str], sinks: set[str]) -> list[dict]
             "type": ntype,
             "role": role,
             "source_file": data.get("source_file") or "",
+            "cols": len(data.get("columns") or []),
         }})
     for src, dst, data in g.edges(data=True):
         elements.append({"data": {

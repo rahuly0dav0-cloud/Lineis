@@ -15,7 +15,7 @@ const activeLangs = new Set(["sql", "sas", "python"]);
 
 const LANG_COLOR = { sql: "#3b82f6", sas: "#f59e0b", python: "#22c55e", "": "#8a97a8" };
 const ROLE_COLOR = { root: "#3b82f6", sink: "#22c55e", mid: "#a855f7", runtime: "#64748b" };
-const LINEAGE_VIEWS = { summary: "Summary", datasets: "Datasets", operations: "Operations", details: "Details", review: "Review" };
+const LINEAGE_VIEWS = { summary: "Summary", datasets: "Datasets", operations: "Operations", details: "Inspect", review: "Review" };
 const $ = (id) => document.getElementById(id);
 
 // ---------------------------------------------------------------------------
@@ -123,7 +123,16 @@ function render(data) {
     layout: { name: "dagre", rankDir, nodeSep: 26, rankSep: 85, edgeSep: 10, padding: 36 },
     wheelSensitivity: 0.25, minZoom: 0.2, maxZoom: 2.5,
   });
-  cy.on("tap", "node", (e) => selectNode(e.target));
+  cy.on("tap", "node", (e) => {
+    const id = e.target.id();
+    const now = Date.now();
+    if (lastTap.id === id && now - lastTap.t < 320) {   // double-tap centres on it
+      cy.animate({ center: { eles: e.target }, zoom: 1.3 }, { duration: 260 });
+    }
+    lastTap = { id, t: now };
+    hideGraphHint(false);
+    selectNode(e.target);
+  });
   cy.on("tap", "edge", (e) => selectEdge(e.target));
   cy.on("tap", (e) => { if (e.target === cy) clearHighlight(); });
 
@@ -133,7 +142,23 @@ function render(data) {
   renderOperations(data);
   renderReview(data);
   switchView("summary");
+  showGraphHint();
   if (agentEnabled) runAgentReview();
+}
+
+// A one-time coachmark over the graph so the key actions (trace to source /
+// impact) are discoverable before a node is ever clicked.
+let lastTap = { id: null, t: 0 };
+function showGraphHint() {
+  const h = $("graphHint");
+  if (!h) return;
+  if (localStorage.getItem("lineis_hint_dismissed") === "1") { h.hidden = true; return; }
+  h.hidden = false;
+}
+function hideGraphHint(persist) {
+  const h = $("graphHint");
+  if (h) h.hidden = true;
+  if (persist) localStorage.setItem("lineis_hint_dismissed", "1");
 }
 
 // ---------------------------------------------------------------------------
@@ -208,9 +233,11 @@ function renderDatasets(data) {
     html += `<div class="grouplabel"><span class="dot ${role}"></span>${label}<span class="cnt">${ids.length}</span></div>`;
     html += ids.map((id) => {
       const d = ds[id] || { name: id, type: "" };
+      const nc = (d.columns || []).length;
       return `<div class="list-item" data-node="${id}">
         <span class="ico">${iconFor(d.type)}</span>
         <span class="nm" title="${d.name}">${d.name}</span>
+        ${nc ? `<span class="col-badge" title="${nc} column${nc > 1 ? "s" : ""} found in code">${nc}&nbsp;col</span>` : ""}
         <span class="typ">${d.type}</span></div>`;
     }).join("");
   }
@@ -315,6 +342,18 @@ function selectNode(node) {
   const up = node.incomers("node").map((n) => n.id());
   const down = node.outgoers("node").map((n) => n.id());
   const producing = (lastResult.operations || []).filter((o) => o.target === d.id);
+  const cols = ds.columns || [];
+  const schemaHtml = cols.length ? `
+    <div class="drow">
+      <div class="k">Schema · ${cols.length} column${cols.length > 1 ? "s" : ""} <span class="k-sub">from code</span></div>
+      <div class="schema">
+        ${cols.map((c) => `<div class="col-row">
+          <span class="col-name" title="${esc(c.name)}">${esc(c.name)}</span>
+          ${c.dtype ? `<span class="col-type">${esc(c.dtype)}</span>` : ""}
+          <span class="col-src ${c.source}" title="${c.source === "declared" ? "Declared in a CREATE TABLE statement" : "Derived from a SELECT projection"}">${c.source}</span>
+        </div>`).join("")}
+      </div>
+    </div>` : "";
 
   $("paneDetails").innerHTML = `
     <div class="d-head">
@@ -322,12 +361,19 @@ function selectNode(node) {
       <div><h3>${esc(d.label)}</h3><span class="role">${d.role === "root" ? "Source" : d.role === "sink" ? "Output" : d.role === "runtime" ? "Runtime (dynamic)" : "Intermediate"} · ${d.type}</span></div>
     </div>
     <div class="d-actions">
-      <button class="btn ghost sm" id="traceSrc">↞ Trace to source</button>
-      <button class="btn ghost sm" id="traceImp">Trace impact ↠</button>
+      <button class="btn trace-btn src" id="traceSrc">
+        <span class="tb-ico">↞</span>
+        <span class="tb-txt"><b>Trace to source</b><small>Where this comes from</small></span>
+      </button>
+      <button class="btn trace-btn imp" id="traceImp">
+        <span class="tb-ico">↠</span>
+        <span class="tb-txt"><b>Trace impact</b><small>What depends on this</small></span>
+      </button>
     </div>
     <div class="drow"><div class="k">Source file</div><div class="v">${esc(d.source_file || "—")}</div></div>
     <div class="drow"><div class="k">Upstream (${up.length})</div><div class="v chiplist">${chips(up)}</div></div>
     <div class="drow"><div class="k">Downstream (${down.length})</div><div class="v chiplist">${chips(down)}</div></div>
+    ${schemaHtml}
     ${producing.length ? `<div class="drow"><div class="k">Produced by</div>${producing.map(opEvidence).join("")}</div>` : ""}`;
 
   wireChips($("paneDetails"));
@@ -916,6 +962,7 @@ function initEvents() {
   };
   $("fitBtn").onclick = () => cy && cy.animate({ fit: { padding: 40 } }, { duration: 250 });
   $("resetHl").onclick = clearHighlight;
+  $("graphHintClose") && ($("graphHintClose").onclick = () => hideGraphHint(true));
   $("exportJson").onclick = () => lastResult && download("lineage.json", JSON.stringify(lastResult, null, 2));
   $("exportOl").onclick = () => lastResult && download("openlineage.json", JSON.stringify(lastResult.openlineage, null, 2));
   $("saveBtn").onclick = saveCurrent;

@@ -18,7 +18,7 @@ import sqlglot
 from sqlglot import exp
 from sqlglot.lineage import lineage as _column_lineage
 
-from ..models import ColumnEdge, Dataset, Operation, ParseResult
+from ..models import Column, ColumnEdge, Dataset, Operation, ParseResult
 from .naming import make_dataset, split_name
 
 logging.getLogger("sqlglot").setLevel(logging.ERROR)
@@ -110,6 +110,25 @@ def _register(datasets: dict[str, Dataset], raw: str, filename: str,
     ds = make_dataset(raw, filename, dtype_hint=dtype_hint)
     datasets.setdefault(ds.id, ds)
     return ds.id
+
+
+def _schema_columns(create: exp.Create) -> list[Column]:
+    """Declared columns (name + type) from a `CREATE TABLE t (col type, ...)`
+    DDL schema. Constraints (PRIMARY KEY, ...) are ignored — only real fields."""
+    node = create.this
+    if not isinstance(node, exp.Schema):
+        return []
+    cols: list[Column] = []
+    for defn in node.expressions:
+        if not isinstance(defn, exp.ColumnDef):
+            continue
+        dtype = defn.args.get("kind")
+        cols.append(Column(
+            name=defn.name,
+            dtype=dtype.sql().upper() if dtype is not None else None,
+            source="declared",
+        ))
+    return cols
 
 
 # Dialects to retry a statement with when the default parse fails. The corpus
@@ -272,6 +291,16 @@ def _emit_statement(stmt: exp.Expression, op_id: str, read: str | None,
         return
 
     target_id = _register(result.datasets, target_raw, filename, dtype_hint)
+
+    # Attach any explicitly declared DDL columns (name + type) to the dataset.
+    if isinstance(stmt, exp.Create):
+        declared = _schema_columns(stmt)
+        if declared:
+            tgt = result.datasets.get(target_id)
+            if tgt is not None:
+                have = {c.name.lower() for c in tgt.columns}
+                tgt.columns.extend(c for c in declared if c.name.lower() not in have)
+
     source_ids = []
     for src in _source_tables(select_scope):
         sid, _, _ = split_name(src)

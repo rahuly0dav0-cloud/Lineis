@@ -102,11 +102,11 @@
 
       <nav class="rail-nav">
         <div class="rail-group">Lineage</div>
-        <button class="rail-item active" data-view="summary"><span class="si-ico">▤</span><span>Summary</span></button>
-        <button class="rail-item" data-view="datasets"><span class="si-ico">▦</span><span>Datasets</span></button>
-        <button class="rail-item" data-view="operations"><span class="si-ico">⇄</span><span>Operations</span></button>
-        <button class="rail-item" data-view="details"><span class="si-ico">◉</span><span>Details</span></button>
-        <button class="rail-item" data-view="review"><span class="si-ico">✦</span><span>Review</span><span id="reviewBadge" class="badge" hidden>0</span></button>
+        <button class="rail-item active" data-view="summary" title="Overview: dataset counts, languages and lineage confidence"><span class="si-ico">▤</span><span>Summary</span></button>
+        <button class="rail-item" data-view="datasets" title="Every dataset grouped by Source, Intermediate and Output — click one to inspect it"><span class="si-ico">▦</span><span>Datasets</span></button>
+        <button class="rail-item" data-view="operations" title="Every transformation with its file, line and code evidence"><span class="si-ico">⇄</span><span>Operations</span></button>
+        <button class="rail-item" data-view="details" title="Inspect a selected dataset: trace to source, downstream impact, schema and evidence"><span class="si-ico">◉</span><span>Inspect</span></button>
+        <button class="rail-item" data-view="review" title="Gaps, low-confidence mappings and the AI lineage review"><span class="si-ico">✦</span><span>Review</span><span id="reviewBadge" class="badge" hidden>0</span></button>
 
         <div class="rail-group">Library</div>
         <button class="rail-item" data-view="history"><span class="si-ico">⟲</span><span>History</span></button>
@@ -152,13 +152,27 @@
             <div class="tabpane" data-pane="datasets" id="paneDatasets"></div>
             <div class="tabpane" data-pane="operations" id="paneOperations"></div>
             <div class="tabpane" data-pane="details" id="paneDetails">
-              <p class="muted empty">Select a dataset or transformation in the graph to inspect its lineage and evidence.</p>
+              <div class="inspect-empty">
+                <div class="ie-ico">◉</div>
+                <p class="ie-lead">Click any dataset in the graph to inspect it.</p>
+                <ul class="ie-list">
+                  <li><span class="ie-k src">↞ Trace to source</span> — see every upstream dataset it was built from.</li>
+                  <li><span class="ie-k imp">Trace impact ↠</span> — see everything downstream that depends on it.</li>
+                  <li><span class="ie-k sch">▦ Schema</span> — the columns and types found in the code.</li>
+                </ul>
+              </div>
             </div>
             <div class="tabpane" data-pane="review" id="paneReview"></div>
           </div>
         </aside>
 
-        <div id="graph"></div>
+        <div id="graph">
+          <div id="graphHint" class="graph-hint" hidden>
+            <span class="gh-ico">☝</span>
+            <span class="gh-txt">Click any dataset to <b>trace it to source</b> or see its <b>downstream impact</b>. Double-click to centre on it.</span>
+            <button class="gh-close" id="graphHintClose" title="Dismiss">×</button>
+          </div>
+        </div>
 
         <!-- History page: replaces graph + panel when History is selected -->
         <section class="ws-history" id="wsHistory" hidden>
