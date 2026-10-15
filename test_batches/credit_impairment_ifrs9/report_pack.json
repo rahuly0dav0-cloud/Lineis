@@ -125,5 +125,79 @@
       ],
       "expected_story": "avg_pd = mean(pd) grouped by segment, computed in Python. The field-level trace stops at the Python boundary until the AI layer reads the groupby."
     }
-  ]
+  ],
+  "lineage": {
+    "focus": {
+      "accumulated_impairment": "finrep_f1804.accumulated_impairment_eur",
+      "coverage_ratio": "finrep_f1804.coverage_ratio_pct",
+      "exposure_at_default": "finrep_f1804.gross_carrying_amount_eur",
+      "probability_of_default": "stg_loan_book.pd",
+      "average_pd_backtest": "pd_backtest.avg_pd"
+    },
+    "tables": [
+      { "id": "raw_loan_accounts", "name": "raw.loan_accounts", "kind": "source", "group": "Core banking", "stage": 0,
+        "columns": ["loan_id", "current_balance_eur", "undrawn_commitment_eur", "credit_conversion_factor", "pd_12m", "lgd_downturn", "rating_grade", "segment_code"],
+        "code": { "file": "core_banking · system of record", "lang": "sql", "line_start": 1,
+          "text": "-- Core banking: loan master (system of record)\nCREATE TABLE raw.loan_accounts (\n  loan_id                   VARCHAR PRIMARY KEY,\n  current_balance_eur       DECIMAL(18,2),\n  undrawn_commitment_eur    DECIMAL(18,2),\n  credit_conversion_factor  DECIMAL(5,4),\n  pd_12m                    DECIMAL(9,6),\n  lgd_downturn              DECIMAL(9,6),\n  rating_grade              VARCHAR,\n  segment_code              VARCHAR\n);" } },
+      { "id": "raw_collateral", "name": "raw.collateral", "kind": "source", "group": "Collateral system", "stage": 0,
+        "columns": ["loan_id", "collateral_type", "collateral_value_eur", "haircut_pct"],
+        "code": { "file": "collateral_mgmt · system of record", "lang": "sql", "line_start": 1,
+          "text": "-- Collateral management system\nCREATE TABLE raw.collateral (\n  loan_id              VARCHAR,\n  collateral_type      VARCHAR,\n  collateral_value_eur DECIMAL(18,2),\n  haircut_pct          DECIMAL(5,4)\n);" } },
+      { "id": "raw_macro_scenarios", "name": "risk.macro_scenarios", "kind": "source", "group": "Risk scenarios", "stage": 0,
+        "columns": ["scenario_id", "scenario_weight", "gdp_shock", "hpi_shock"],
+        "code": { "file": "risk_scenarios · forward-looking set", "lang": "sql", "line_start": 1,
+          "text": "-- IFRS 9 forward-looking macro scenario set\nCREATE TABLE risk.macro_scenarios (\n  scenario_id     VARCHAR,\n  scenario_weight DECIMAL(5,4),\n  gdp_shock       DECIMAL(9,6),\n  hpi_shock       DECIMAL(9,6)\n);" } },
+      { "id": "stg_loan_book", "name": "stg.loan_book", "kind": "stage", "group": "Staging (SQL)", "stage": 1,
+        "columns": ["loan_id", "current_balance_eur", "undrawn_commitment_eur", "ead_eur", "pd", "lgd", "segment"],
+        "code": { "file": "01_stage_loan_book.sql", "lang": "sql", "line_start": 1,
+          "text": "-- 01_stage_loan_book.sql  ·  build the staged loan book\nCREATE TABLE stg.loan_book AS\nSELECT\n    a.loan_id,\n    a.current_balance_eur,\n    a.undrawn_commitment_eur,\n    -- Exposure at default = drawn + CCF-weighted undrawn\n    a.current_balance_eur\n      + a.undrawn_commitment_eur * a.credit_conversion_factor AS ead_eur,\n    a.pd_12m       AS pd,\n    a.lgd_downturn AS lgd,\n    a.segment_code AS segment\nFROM raw.loan_accounts a;" } },
+      { "id": "stg_collateral", "name": "stg.collateral", "kind": "stage", "group": "Staging (SQL)", "stage": 1,
+        "columns": ["loan_id", "net_collateral_eur"],
+        "code": { "file": "01_stage_loan_book.sql", "lang": "sql", "line_start": 18,
+          "text": "-- net collateral after regulatory haircut\nCREATE TABLE stg.collateral AS\nSELECT\n    loan_id,\n    collateral_value_eur * (1 - haircut_pct) AS net_collateral_eur\nFROM raw.collateral;" } },
+      { "id": "work_ecl_by_account", "name": "work.ecl_by_account", "kind": "boundary", "group": "ECL engine (SAS)", "stage": 2,
+        "columns": ["loan_id", "lifetime_ecl_eur", "stage_flag", "discount_factor"],
+        "code": { "file": "02_ecl_engine.sas", "lang": "sas", "line_start": 1,
+          "text": "/* 02_ecl_engine.sas  ·  IFRS 9 lifetime ECL engine */\n%macro ecl_engine(loans=, collat=, scen=, out=);\n  proc sql;\n    create table &out as\n    select l.loan_id,\n           /* scenario-weighted EAD x PD x LGD x discount */\n           %ecl_core(l, c, s)  as lifetime_ecl_eur,\n           %stage_alloc(l)     as stage_flag,\n           %discount(l)        as discount_factor\n    from &loans l\n      left join &collat c on l.loan_id = c.loan_id\n      cross join &scen  s\n    group by l.loan_id;\n  quit;\n%mend;\n%ecl_engine(loans=stg.loan_book, collat=stg.collateral,\n            scen=risk.macro_scenarios, out=work.ecl_by_account);" } },
+      { "id": "pd_backtest", "name": "pd_backtest", "kind": "boundary", "group": "Model monitoring (Python)", "stage": 2,
+        "columns": ["segment", "avg_pd", "n_accounts"],
+        "code": { "file": "05_pd_backtest.py", "lang": "py", "line_start": 1,
+          "text": "# 05_pd_backtest.py  ·  PD model back-test (segment means)\nimport pandas as pd\n\nloan_book = pd.read_sql(\"SELECT segment, pd FROM stg.loan_book\", conn)\n\npd_backtest = (\n    loan_book\n      .groupby(\"segment\", as_index=False)\n      .agg(avg_pd=(\"pd\", \"mean\"),\n           n_accounts=(\"pd\", \"size\"))\n)\npd_backtest.to_sql(\"pd_backtest\", conn, if_exists=\"replace\")" } },
+      { "id": "mart_impairment_by_segment", "name": "mart.impairment_by_segment", "kind": "mart", "group": "Impairment mart (SQL)", "stage": 3,
+        "columns": ["segment", "accumulated_impairment_eur", "ead_total_eur", "coverage_ratio"],
+        "code": { "file": "03_impairment_mart.sql", "lang": "sql", "line_start": 1,
+          "text": "-- 03_impairment_mart.sql  ·  aggregate ECL to portfolio segment\nCREATE TABLE mart.impairment_by_segment AS\nSELECT\n    b.segment,\n    SUM(e.lifetime_ecl_eur)             AS accumulated_impairment_eur,\n    SUM(b.ead_eur)                      AS ead_total_eur,\n    SUM(e.lifetime_ecl_eur)\n      / NULLIF(SUM(b.ead_eur), 0)       AS coverage_ratio\nFROM work.ecl_by_account e\nJOIN stg.loan_book b ON e.loan_id = b.loan_id\nGROUP BY b.segment;" } },
+      { "id": "finrep_f1804", "name": "finrep_f1804_impairment", "kind": "report", "group": "Regulatory report (SQL)", "stage": 4,
+        "columns": ["report_row", "gross_carrying_amount_eur", "accumulated_impairment_eur", "coverage_ratio_pct"],
+        "code": { "file": "04_finrep_f1804_report.sql", "lang": "sql", "line_start": 1,
+          "text": "-- 04_finrep_f1804_report.sql  ·  FINREP F18.04 template\nCREATE TABLE finrep_f1804_impairment AS\nSELECT\n    segment                        AS report_row,\n    ead_total_eur                  AS gross_carrying_amount_eur,\n    accumulated_impairment_eur,\n    ROUND(coverage_ratio * 100, 2) AS coverage_ratio_pct\nFROM mart.impairment_by_segment;" } }
+    ],
+    "columnEdges": [
+      { "from": "raw_loan_accounts.current_balance_eur", "to": "stg_loan_book.ead_eur" },
+      { "from": "raw_loan_accounts.undrawn_commitment_eur", "to": "stg_loan_book.ead_eur" },
+      { "from": "raw_loan_accounts.credit_conversion_factor", "to": "stg_loan_book.ead_eur" },
+      { "from": "raw_loan_accounts.current_balance_eur", "to": "stg_loan_book.current_balance_eur" },
+      { "from": "raw_loan_accounts.undrawn_commitment_eur", "to": "stg_loan_book.undrawn_commitment_eur" },
+      { "from": "raw_loan_accounts.pd_12m", "to": "stg_loan_book.pd" },
+      { "from": "raw_loan_accounts.lgd_downturn", "to": "stg_loan_book.lgd" },
+      { "from": "raw_loan_accounts.segment_code", "to": "stg_loan_book.segment" },
+      { "from": "raw_collateral.collateral_value_eur", "to": "stg_collateral.net_collateral_eur" },
+      { "from": "raw_collateral.haircut_pct", "to": "stg_collateral.net_collateral_eur" },
+      { "from": "work_ecl_by_account.lifetime_ecl_eur", "to": "mart_impairment_by_segment.accumulated_impairment_eur" },
+      { "from": "stg_loan_book.ead_eur", "to": "mart_impairment_by_segment.ead_total_eur" },
+      { "from": "stg_loan_book.segment", "to": "mart_impairment_by_segment.segment" },
+      { "from": "work_ecl_by_account.lifetime_ecl_eur", "to": "mart_impairment_by_segment.coverage_ratio" },
+      { "from": "stg_loan_book.ead_eur", "to": "mart_impairment_by_segment.coverage_ratio" },
+      { "from": "mart_impairment_by_segment.segment", "to": "finrep_f1804.report_row" },
+      { "from": "mart_impairment_by_segment.ead_total_eur", "to": "finrep_f1804.gross_carrying_amount_eur" },
+      { "from": "mart_impairment_by_segment.accumulated_impairment_eur", "to": "finrep_f1804.accumulated_impairment_eur" },
+      { "from": "mart_impairment_by_segment.coverage_ratio", "to": "finrep_f1804.coverage_ratio_pct" }
+    ],
+    "tableEdges": [
+      { "from": "stg_loan_book", "to": "work_ecl_by_account", "boundary": true, "reason": "Lifetime ECL is computed inside the SAS %ecl_engine macro (scenario-weighted EAD × PD × LGD × discount). The parser resolves the inputs at table level but cannot read the per-column formula inside the macro — this is where AI + a manual review of run logs and the model catalogue close the gap." },
+      { "from": "stg_collateral", "to": "work_ecl_by_account", "boundary": true, "reason": "Collateral feeds the same SAS ECL engine; the LGD adjustment happens inside the macro and is opaque to static parsing." },
+      { "from": "raw_macro_scenarios", "to": "work_ecl_by_account", "boundary": true, "reason": "Forward-looking scenarios are cross-joined and weighted inside the SAS macro; the weighting logic is not statically visible." },
+      { "from": "stg_loan_book", "to": "pd_backtest", "boundary": true, "reason": "avg_pd is produced by a pandas groupby().agg() in Python. The aggregation is opaque to the static parser until the AI layer reads the Python." }
+    ]
+  }
 }

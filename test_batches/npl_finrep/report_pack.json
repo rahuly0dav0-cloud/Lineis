@@ -87,5 +87,67 @@
       ],
       "expected_story": "npl_ratio_pct = npl_exposure / gross_carrying_amount × 100. The NPE numerator inherits the Python boundary from the classification step."
     }
-  ]
+  ],
+  "lineage": {
+    "focus": {
+      "non_performing_exposures": "finrep_f1800_npl.npl_exposure_eur",
+      "npl_coverage_ratio": "finrep_f1800_npl.npl_coverage_ratio_pct",
+      "npl_ratio": "finrep_f1800_npl.npl_ratio_pct"
+    },
+    "tables": [
+      { "id": "raw_loan_accounts", "name": "raw.loan_accounts", "kind": "source", "group": "Core banking", "stage": 0,
+        "columns": ["loan_id", "gross_carrying_amount_eur", "days_past_due", "forbearance_flag", "segment_code"],
+        "code": { "file": "core_banking · system of record", "lang": "sql", "line_start": 1,
+          "text": "-- Core banking: loan master (system of record)\nCREATE TABLE raw.loan_accounts (\n  loan_id                   VARCHAR PRIMARY KEY,\n  gross_carrying_amount_eur DECIMAL(18,2),\n  days_past_due             INTEGER,\n  forbearance_flag          SMALLINT,\n  segment_code              VARCHAR\n);" } },
+      { "id": "raw_provisions", "name": "raw.provisions", "kind": "source", "group": "Provisioning system", "stage": 0,
+        "columns": ["loan_id", "accumulated_provision_eur", "stage_flag"],
+        "code": { "file": "provisioning · system of record", "lang": "sql", "line_start": 1,
+          "text": "-- Provisioning system (system of record)\nCREATE TABLE raw.provisions (\n  loan_id                   VARCHAR,\n  accumulated_provision_eur DECIMAL(18,2),\n  stage_flag                SMALLINT\n);" } },
+      { "id": "raw_arrears", "name": "raw.arrears", "kind": "source", "group": "Collections system", "stage": 0,
+        "columns": ["loan_id", "max_dpd_current", "cure_flag", "forborne_flag"],
+        "code": { "file": "collections · arrears system", "lang": "sql", "line_start": 1,
+          "text": "-- Collections / arrears system\nCREATE TABLE raw.arrears (\n  loan_id         VARCHAR,\n  max_dpd_current INTEGER,\n  cure_flag       SMALLINT,\n  forborne_flag   SMALLINT\n);" } },
+      { "id": "stg_exposure_book", "name": "stg.exposure_book", "kind": "stage", "group": "Staging (SQL)", "stage": 1,
+        "columns": ["loan_id", "gross_carrying_amount_eur", "days_past_due", "forbearance_flag", "segment", "accumulated_provision_eur"],
+        "code": { "file": "01_stage_exposure.sql", "lang": "sql", "line_start": 1,
+          "text": "-- 01_stage_exposure.sql  ·  consolidated exposure book\nCREATE TABLE stg.exposure_book AS\nSELECT\n    a.loan_id,\n    a.gross_carrying_amount_eur,\n    GREATEST(a.days_past_due, r.max_dpd_current) AS days_past_due,\n    CASE WHEN a.forbearance_flag = 1 OR r.forborne_flag = 1\n         THEN 1 ELSE 0 END                       AS forbearance_flag,\n    a.segment_code                               AS segment,\n    p.accumulated_provision_eur\nFROM raw.loan_accounts a\nLEFT JOIN raw.provisions p ON a.loan_id = p.loan_id\nLEFT JOIN raw.arrears    r ON a.loan_id = r.loan_id;" } },
+      { "id": "npl_flagged", "name": "npl_flagged", "kind": "boundary", "group": "NPE engine (Python)", "stage": 2,
+        "columns": ["loan_id", "segment", "gross_carrying_amount_eur", "is_npl", "npl_exposure_eur", "provision_eur"],
+        "code": { "file": "02_npl_classify.py", "lang": "py", "line_start": 1,
+          "text": "# 02_npl_classify.py  ·  EBA non-performing exposure classification\nimport pandas as pd\n\nbook = pd.read_sql(\"SELECT * FROM stg.exposure_book\", conn)\n\ndef classify(row):\n    # EBA NPE: 90+ days past due, OR forborne unlikely-to-pay\n    dpd_default  = row.days_past_due >= 90\n    forborne_utp = row.forbearance_flag == 1 and row.days_past_due >= 30\n    return 1 if (dpd_default or forborne_utp) else 0\n\nbook[\"is_npl\"]           = book.apply(classify, axis=1)\nbook[\"npl_exposure_eur\"] = book.gross_carrying_amount_eur * book.is_npl\nbook[\"provision_eur\"]    = book.accumulated_provision_eur\n\nnpl_flagged = book[[\"loan_id\", \"segment\", \"gross_carrying_amount_eur\",\n                    \"is_npl\", \"npl_exposure_eur\", \"provision_eur\"]]\nnpl_flagged.to_sql(\"npl_flagged\", conn, if_exists=\"replace\", index=False)" } },
+      { "id": "npl_by_segment", "name": "npl_by_segment", "kind": "mart", "group": "NPL mart (SQL)", "stage": 3,
+        "columns": ["segment", "gross_carrying_amount_eur", "npl_exposure_eur", "npl_provision_eur", "npl_coverage_ratio"],
+        "code": { "file": "03_npl_mart.sql", "lang": "sql", "line_start": 1,
+          "text": "-- 03_npl_mart.sql  ·  aggregate NPE to portfolio segment\nCREATE TABLE npl_by_segment AS\nSELECT\n    b.segment,\n    SUM(b.gross_carrying_amount_eur)             AS gross_carrying_amount_eur,\n    SUM(f.npl_exposure_eur)                      AS npl_exposure_eur,\n    SUM(f.provision_eur)                         AS npl_provision_eur,\n    SUM(f.provision_eur)\n      / NULLIF(SUM(f.npl_exposure_eur), 0)       AS npl_coverage_ratio\nFROM stg.exposure_book b\nJOIN npl_flagged f ON b.loan_id = f.loan_id\nGROUP BY b.segment;" } },
+      { "id": "finrep_f1800_npl", "name": "finrep_f1800_npl", "kind": "report", "group": "Regulatory report (SQL)", "stage": 4,
+        "columns": ["report_row", "gross_carrying_amount_eur", "npl_exposure_eur", "npl_ratio_pct", "npl_coverage_ratio_pct"],
+        "code": { "file": "04_finrep_f1800_report.sql", "lang": "sql", "line_start": 1,
+          "text": "-- 04_finrep_f1800_report.sql  ·  FINREP F18.00 template\nCREATE TABLE finrep_f1800_npl AS\nSELECT\n    segment                                   AS report_row,\n    gross_carrying_amount_eur,\n    npl_exposure_eur,\n    ROUND(npl_exposure_eur\n      / NULLIF(gross_carrying_amount_eur, 0) * 100, 2) AS npl_ratio_pct,\n    ROUND(npl_coverage_ratio * 100, 2)        AS npl_coverage_ratio_pct\nFROM npl_by_segment;" } }
+    ],
+    "columnEdges": [
+      { "from": "raw_loan_accounts.loan_id", "to": "stg_exposure_book.loan_id" },
+      { "from": "raw_loan_accounts.gross_carrying_amount_eur", "to": "stg_exposure_book.gross_carrying_amount_eur" },
+      { "from": "raw_loan_accounts.days_past_due", "to": "stg_exposure_book.days_past_due" },
+      { "from": "raw_arrears.max_dpd_current", "to": "stg_exposure_book.days_past_due" },
+      { "from": "raw_loan_accounts.forbearance_flag", "to": "stg_exposure_book.forbearance_flag" },
+      { "from": "raw_arrears.forborne_flag", "to": "stg_exposure_book.forbearance_flag" },
+      { "from": "raw_loan_accounts.segment_code", "to": "stg_exposure_book.segment" },
+      { "from": "raw_provisions.accumulated_provision_eur", "to": "stg_exposure_book.accumulated_provision_eur" },
+      { "from": "stg_exposure_book.gross_carrying_amount_eur", "to": "npl_by_segment.gross_carrying_amount_eur" },
+      { "from": "stg_exposure_book.segment", "to": "npl_by_segment.segment" },
+      { "from": "npl_flagged.npl_exposure_eur", "to": "npl_by_segment.npl_exposure_eur" },
+      { "from": "npl_flagged.provision_eur", "to": "npl_by_segment.npl_provision_eur" },
+      { "from": "npl_flagged.npl_exposure_eur", "to": "npl_by_segment.npl_coverage_ratio" },
+      { "from": "npl_flagged.provision_eur", "to": "npl_by_segment.npl_coverage_ratio" },
+      { "from": "npl_by_segment.segment", "to": "finrep_f1800_npl.report_row" },
+      { "from": "npl_by_segment.gross_carrying_amount_eur", "to": "finrep_f1800_npl.gross_carrying_amount_eur" },
+      { "from": "npl_by_segment.npl_exposure_eur", "to": "finrep_f1800_npl.npl_exposure_eur" },
+      { "from": "npl_by_segment.npl_exposure_eur", "to": "finrep_f1800_npl.npl_ratio_pct" },
+      { "from": "npl_by_segment.gross_carrying_amount_eur", "to": "finrep_f1800_npl.npl_ratio_pct" },
+      { "from": "npl_by_segment.npl_coverage_ratio", "to": "finrep_f1800_npl.npl_coverage_ratio_pct" }
+    ],
+    "tableEdges": [
+      { "from": "stg_exposure_book", "to": "npl_flagged", "boundary": true, "reason": "The non-performing flag (is_npl) is computed in a Python engine under the EBA definition (90+ days past due OR forborne unlikely-to-pay). npl_exposure_eur = exposure × is_npl is produced row-by-row in pandas, so the per-account classification rule is opaque to the static parser — this is where AI + a manual review of the run logs and model catalogue recover the rule." }
+    ]
+  }
 }

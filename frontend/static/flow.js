@@ -224,33 +224,36 @@
         <div class="pf-top-spacer"></div>
         <button class="pf-btn primary sm" id="pfUpload">＋ Upload Report Assets</button>
       </div>
-      <div class="pf-report-grid" id="pfReportGrid"></div>`;
+      <div class="pf-rlist" id="pfReportGrid"></div>`;
 
     const grid = $("pfReportGrid");
     if (!shown.length) {
       grid.innerHTML = `<div class="pf-empty"><div class="big">▣</div>No reports match these filters.</div>`;
     } else {
       grid.innerHTML = shown.map((r) => `
-        <div class="pf-rcard" data-batch="${esc(r.batch)}">
-          <div class="pf-rcard-top">
-            <span class="pf-domain-tag ${domainClass(r.domain)}">${esc(r.domain || "Report")}</span>
-            <span class="pf-rcard-cdes"><b>${r.cde_count}</b> CDEs</span>
+        <div class="pf-rrow" data-batch="${esc(r.batch)}">
+          <div class="pf-rrow-main">
+            <div class="pf-rrow-head">
+              <span class="pf-domain-tag ${domainClass(r.domain)}">${esc(r.domain || "Report")}</span>
+              <h3>${esc(r.name)}</h3>
+              <span class="pf-rrow-fw">${esc(r.framework || "")}</span>
+            </div>
+            <p>${esc(r.description || "")}</p>
+            <div class="pf-rrow-sub">
+              <span>Owner <b>${esc(r.owner || "—")}</b></span>
+              <span>Frequency <b>${esc(r.frequency || "—")}</b></span>
+              <span>Version <b>${esc(r.version || "—")}</b></span>
+              <span>Updated <b>${esc(r.last_updated || "—")}</b></span>
+            </div>
           </div>
-          <h3>${esc(r.name)}</h3>
-          <div class="fw">${esc(r.framework || "")}</div>
-          <p>${esc(r.description || "")}</p>
-          <div class="pf-rcard-meta">
-            <div><span class="k">Owner</span><span class="v">${esc(r.owner || "—")}</span></div>
-            <div><span class="k">Frequency</span><span class="v">${esc(r.frequency || "—")}</span></div>
-            <div><span class="k">Version</span><span class="v">${esc(r.version || "—")}</span></div>
-            <div><span class="k">Last updated</span><span class="v">${esc(r.last_updated || "—")}</span></div>
-          </div>
-          <div class="pf-rcard-foot">
-            <div class="pf-rcard-langs">${(r.languages || []).map((l) => `<span class="pf-lg ${l}">${esc(l)}</span>`).join("")}</div>
-            <span class="pf-rcard-cdes">${r.files} files · ${r.lines} lines</span>
+          <div class="pf-rrow-side">
+            <div class="pf-rrow-cdes"><b>${r.cde_count}</b><span>CDEs</span></div>
+            <div class="pf-rrow-langs">${(r.languages || []).map((l) => `<span class="pf-lg ${l}">${esc(l)}</span>`).join("")}</div>
+            <div class="pf-rrow-files">${r.files} files · ${r.lines} lines</div>
+            <span class="pf-rrow-go">Trace lineage →</span>
           </div>
         </div>`).join("");
-      grid.querySelectorAll(".pf-rcard").forEach((c) =>
+      grid.querySelectorAll(".pf-rrow").forEach((c) =>
         c.onclick = () => openReport(c.dataset.batch));
     }
 
@@ -423,7 +426,7 @@
 
   function wireFieldPanel() {
     const t = $("pfTrace");
-    if (t) t.onclick = () => startResolve();
+    if (t) t.onclick = () => startLineage();
   }
 
   function renderDictTab(body) {
@@ -484,233 +487,291 @@
   }
 
   // =====================================================================
-  //  Screen 3 · Resolve the starting point
+  //  LINEAGE · Collibra-style field + table graph (data from pack.lineage)
   // =====================================================================
-  function startResolve() {
-    const c = PF.cde;
-    const cands = (c && c.candidates) || [];
-    PF.resolvePick = cands.findIndex((x) => x.recommended);
-    if (PF.resolvePick < 0) PF.resolvePick = 0;
-    renderResolve();
+  const KIND = {
+    source:   { c: "#0f9d6a", label: "Source table" },
+    stage:    { c: "#2563eb", label: "Staging" },
+    boundary: { c: "#d97706", label: "Grey zone · AI + manual" },
+    mart:     { c: "#7c3aed", label: "Mart / aggregate" },
+    report:   { c: "#e11d48", label: "Regulatory report" },
+  };
+
+  function keyTable(key) { return String(key).split(".")[0]; }
+  function keyCol(key) { const i = String(key).indexOf("."); return i < 0 ? key : key.slice(i + 1); }
+  function tableName(id) { const t = PF.model && PF.model.byId[id]; return t ? t.name : id; }
+
+  function startLineage() {
+    const lin = PF.pack && PF.pack.lineage;
+    if (!lin || !(lin.tables || []).length) {
+      setStep("lineage");
+      const m = $("pfMain"); m.className = "pf-main";
+      m.innerHTML = `<div class="pf-empty"><div class="big">⎔</div>No lineage graph is configured for this report yet.</div>`;
+      return;
+    }
+    PF.model = buildGraphModel(lin);
+    PF.focusKey = (lin.focus && lin.focus[PF.cde.id]) || defaultFocusKey();
+    PF.showFullTable = false;
+    PF.inspect = null;
+    PF.hl = computeHighlight(PF.focusKey);
+    renderLineage();
   }
 
-  function renderResolve() {
-    setStep("resolve");
-    const c = PF.cde;
-    const cands = (c && c.candidates) || [];
-    const main = $("pfMain");
-    main.className = "pf-main";
-    main.innerHTML = `
-      <div class="pf-resolve-head">
-        <h2>Resolve the starting point</h2>
-        <p>The code produces several datasets that could be the source of
-           <b>${esc(c.business_name)}</b>. Confirm which output is the published figure so the
-           upstream trace starts from the right place. Each option carries the code evidence that supports it.</p>
-      </div>
-      <div class="pf-card"><div class="pf-table-wrap"><table class="pf-cand-table" id="pfCandTable">
-        <thead><tr><th></th><th>Dataset / Table</th><th>Column</th><th>Job / Process</th><th>Last updated</th><th>Confidence</th><th></th></tr></thead>
-        <tbody>${cands.map((cd, i) => {
-          const pct = Math.round((cd.confidence || 0) * 100);
-          const lvl = pct >= 80 ? "high" : pct >= 55 ? "medium" : "low";
-          return `<tr data-i="${i}" class="${i === PF.resolvePick ? "sel" : ""}">
-            <td><span class="pf-radio"></span></td>
-            <td class="pf-mono">${esc(dsName(cd.dataset))}${cd.recommended ? `<span class="pf-rec-pill">recommended</span>` : ""}</td>
-            <td class="pf-mono">${esc(cd.column)}</td>
-            <td class="pf-mono" style="font-size:11.5px">${esc(cd.job || "—")}</td>
-            <td>${esc(cd.last_updated || "—")}</td>
-            <td><div class="pf-conf"><div class="pf-conf-bar"><div class="pf-conf-fill ${lvl}" style="width:${pct}%"></div></div><span class="pf-conf-val">${pct}%</span></div></td>
-            <td><button class="pf-eye" data-eye="${i}" title="Show evidence">👁</button></td></tr>`;
-        }).join("")}</tbody>
-      </table></div></div>
-      <div id="pfEvidence"></div>
-      <div class="pf-resolve-foot">
-        <button class="pf-btn" id="pfResolveBack">← Back to report</button>
-        <button class="pf-btn primary" id="pfConfirm">Confirm &amp; Trace Upstream →</button>
-      </div>`;
-
-    main.querySelectorAll("#pfCandTable tbody tr").forEach((tr) =>
-      tr.onclick = () => { PF.resolvePick = +tr.dataset.i; renderResolve(); });
-    main.querySelectorAll("[data-eye]").forEach((b) =>
-      b.onclick = (e) => { e.stopPropagation(); PF.resolvePick = +b.dataset.eye; renderResolve(); });
-    $("pfResolveBack").onclick = () => renderReport();
-    $("pfConfirm").onclick = () => {
-      const cd = cands[PF.resolvePick];
-      PF.source = { dataset: cd.dataset, column: cd.column };
-      PF.lineageTab = "graph";
-      renderLineage();
-    };
-    renderEvidence();
+  function defaultFocusKey() {
+    const m = PF.model;
+    const rep = m.tables.slice().sort((a, b) => b.stage - a.stage)[0];
+    const col = rep.columns.find((c) => !/_id$|_row$/.test(c)) || rep.columns[0];
+    return rep.id + "." + col;
   }
 
-  function renderEvidence() {
-    const c = PF.cde;
-    const cd = (c.candidates || [])[PF.resolvePick];
-    const box = $("pfEvidence");
-    if (!cd) { box.innerHTML = ""; return; }
-    const op = opFor(cd.dataset);
-    box.innerHTML = `
-      <div class="pf-evidence">
-        <div class="pf-evidence-head">
-          <h4>Evidence for ${esc(dsName(cd.dataset))}.${esc(cd.column)}</h4>
-          <div class="pf-ev-meta">${op ? `<span>File <b>${esc(op.file)}</b></span><span>Lines <b>${lineRange(op)}</b></span><span>Language <b>${LANG_LABEL[op.language] || op.language}</b></span>` : `<span>Source dataset — no producing code in scope</span>`}</div>
-        </div>
-        <div style="padding:12px 16px; font-size:12.5px; color:var(--pf-text-dim)">${esc(cd.why || "")}</div>
-        ${op ? codeBlock(op, cd.column) : ""}
-      </div>`;
+  function buildGraphModel(lin) {
+    const tables = (lin.tables || []).map((t) => ({ ...t, columns: t.columns || [] }));
+    const byId = Object.fromEntries(tables.map((t) => [t.id, t]));
+    const columnEdges = (lin.columnEdges || []).filter((e) => e.from && e.to);
+    const tableEdges = (lin.tableEdges || []);
+    const inAdj = new Map();
+    const outAdj = new Map();
+    columnEdges.forEach((e) => {
+      if (!inAdj.has(e.to)) inAdj.set(e.to, []);
+      inAdj.get(e.to).push(e.from);
+      if (!outAdj.has(e.from)) outAdj.set(e.from, []);
+      outAdj.get(e.from).push(e.to);
+    });
+    return { tables, byId, columnEdges, tableEdges, inAdj, outAdj };
   }
 
-  // =====================================================================
-  //  Shared · code block with line numbers + light syntax highlight
-  // =====================================================================
-  function highlight(line, lang) {
-    let s = esc(line);
-    // comments
-    s = s.replace(/(--.*$|\/\*.*?\*\/|#.*$)/g, '<span class="pf-tok-com">$1</span>');
-    // strings (single quotes are already HTML-escaped to &#39; by esc())
-    s = s.replace(/(&#39;[^&]*&#39;)/g, '<span class="pf-tok-str">$1</span>');
-    // numbers
-    s = s.replace(/\b(\d+\.?\d*)\b/g, '<span class="pf-tok-num">$1</span>');
-    // keywords
-    const kw = /\b(CREATE|TABLE|AS|SELECT|FROM|WHERE|JOIN|LEFT|RIGHT|INNER|CROSS|GROUP|BY|ORDER|SUM|COUNT|AVG|COALESCE|NULLIF|CASE|WHEN|THEN|ELSE|END|data|set|run|proc|sql|quit|into|if|def|import|return|groupby|agg)\b/gi;
-    s = s.replace(kw, '<span class="pf-tok-kw">$1</span>');
-    return s;
-  }
-  function codeBlock(op, hotCol) {
-    const lines = String(op.snippet || "").split("\n");
-    const start = op.line_start || 1;
-    const hot = hotCol ? String(hotCol).toLowerCase() : null;
-    return `<pre class="pf-code">${lines.map((ln, i) => {
-      const isHot = hot && ln.toLowerCase().includes(hot);
-      return `<div class="ln ${isHot ? "hot" : ""}"><span class="no">${start + i}</span><span class="tx">${highlight(ln, op.language)}</span></div>`;
-    }).join("")}</pre>`;
+  // Upstream closure of the focus column + grey-zone boundary detection.
+  function computeHighlight(focusKey) {
+    const m = PF.model;
+    const cols = new Set(), edges = new Set(), boundaryEdges = new Set();
+    const contextTables = new Set(), pathTables = new Set();
+    const boundaries = [], origins = [], depth = new Map();
+    if (!focusKey) return { cols, edges, boundaryEdges, contextTables, pathTables, boundaries, origins, maxDepth: 0 };
+    depth.set(focusKey, 0);
+    const queue = [focusKey], seen = new Set();
+    while (queue.length) {
+      const cur = queue.shift();
+      if (seen.has(cur)) continue;
+      seen.add(cur);
+      cols.add(cur);
+      pathTables.add(keyTable(cur));
+      const ins = m.inAdj.get(cur) || [];
+      if (!ins.length) {
+        const tid = keyTable(cur);
+        const bEdges = m.tableEdges.filter((e) => e.to === tid && e.boundary);
+        if (bEdges.length) {
+          bEdges.forEach((be) => { boundaryEdges.add(be.from + ">" + be.to); contextTables.add(be.from); });
+          boundaries.push({ table: tid, column: keyCol(cur), reason: bEdges[0].reason || "", sources: bEdges.map((b) => b.from) });
+        } else {
+          origins.push(cur);
+        }
+      }
+      ins.forEach((f) => {
+        edges.add(f + ">" + cur);
+        if (!depth.has(f)) { depth.set(f, (depth.get(cur) || 0) + 1); queue.push(f); }
+      });
+    }
+    let maxDepth = 0; depth.forEach((d) => { if (d > maxDepth) maxDepth = d; });
+    return { cols, edges, boundaryEdges, contextTables, pathTables, boundaries, origins, maxDepth };
   }
 
-  // =====================================================================
-  //  Screen 4 · Interactive upstream lineage
-  // =====================================================================
   function renderLineage() {
     setStep("lineage");
-    PF.lineage = buildLineage(PF.source.dataset, PF.source.column);
+    const cde = PF.cde;
     const meta = (PF.pack && PF.pack.report) || {};
-    $("pfTopTitle").innerHTML = `Lineage · ${esc(PF.cde.business_name)}<span>${esc(meta.name || "")}</span>`;
+    $("pfTopTitle").innerHTML = `Lineage · ${esc(cde.business_name)}<span>${esc(meta.name || "")}</span>`;
     const main = $("pfMain");
     main.className = "pf-main flush";
-
-    const stats = coverageStats(PF.lineage);
-    const tabs = [["graph", "Graph View"], ["table", "Table View"], ["formula", "Formula View"], ["impact", "Impact View"]];
+    const hl = PF.hl;
+    const legend = Object.keys(KIND).map((k) => `<span><i style="background:${KIND[k].c}"></i>${KIND[k].label}</span>`).join("")
+      + `<span><i class="pf-lg-path"></i>Highlighted field path</span>`;
     main.innerHTML = `
-      <div class="pf-lineage-bar">
-        <h2>Upstream lineage — <span class="mono">${esc(PF.cde.business_name)}</span></h2>
-        <div class="pf-tabs" id="pfLineageTabs" style="background:var(--pf-surface-2)">
-          ${tabs.map(([k, l]) => `<button class="pf-tab ${k === PF.lineageTab ? "active" : ""}" data-t="${k}">${l}</button>`).join("")}
+      <div class="pf-lin-head">
+        <div class="pf-lin-title">
+          <span class="pf-lin-kicker">◎ Field lineage</span>
+          <h2>${esc(cde.business_name)}</h2>
+          <div class="pf-lin-sub"><span class="mono">${esc(tableName(keyTable(PF.focusKey)))}.${esc(keyCol(PF.focusKey))}</span> · ${esc(meta.name || "")}</div>
         </div>
-        <div class="pf-top-spacer"></div>
-        <span class="pf-state ${stats.unresolved ? "unresolved" : "verified"}">${stats.verified} verified · ${stats.unresolved} unresolved</span>
-        <button class="pf-btn sm" id="pfExpandAll">Expand All</button>
-        <button class="pf-btn sm" id="pfExport">Export</button>
+        <div class="pf-lin-actions">
+          <label class="pf-switch"><input type="checkbox" id="pfFullToggle" ${PF.showFullTable ? "checked" : ""}><span class="pf-switch-ui"></span><span class="pf-switch-tx">Show full table lineage</span></label>
+          <button class="pf-btn sm" id="pfFit">⤢ Fit</button>
+          <button class="pf-btn sm" id="pfExport">Export CSV</button>
+          <button class="pf-btn sm" id="pfBackReport">← Report</button>
+        </div>
       </div>
+      ${traceSummaryHtml(hl)}
       <div class="pf-lineage-main">
-        <div class="pf-graph-wrap" id="pfGraphWrap"><div id="pfGraph"></div></div>
-        <div class="pf-view" id="pfLineageView" hidden></div>
-        <div id="pfInspectHost"></div>
-      </div>
-      <div class="pf-legend">
-        <span><i class="report"></i>Report Field</span>
-        <span><i class="calc"></i>Calculated Field</span>
-        <span><i class="table"></i>Table / Dataset</span>
-        <span><i class="code"></i>Code / Process</span>
-        <span><i class="source"></i>Source Field</span>
+        <div class="pf-graph-wrap" id="pfGraphWrap">
+          <div id="pfGraph"></div>
+          <div class="pf-legend">${legend}</div>
+        </div>
+        <aside class="pf-inspect-host" id="pfInspectHost">${panelEmptyHtml()}</aside>
       </div>`;
-
-    main.querySelectorAll("#pfLineageTabs .pf-tab").forEach((t) =>
-      t.onclick = () => { PF.lineageTab = t.dataset.t; renderLineage(); });
-    $("pfExpandAll").onclick = () => pfCy && pfCy.fit(undefined, 40);
+    $("pfFullToggle").onchange = (e) => { PF.showFullTable = e.target.checked; applyFade(); };
+    $("pfFit").onclick = () => pfCy && pfCy.fit(undefined, 44);
     $("pfExport").onclick = () => exportLineage();
+    $("pfBackReport").onclick = () => { PF.reportTab = "report"; renderReport(); };
+    const tai = $("pfTraceAi");
+    if (tai) tai.onclick = () => boundaryResolveAi(hl.boundaries[0] ? { to: hl.boundaries[0].table } : null, "pfTraceAiOut");
+    requestAnimationFrame(drawGraph);
+  }
 
-    const graphWrap = $("pfGraphWrap");
-    const view = $("pfLineageView");
-    if (PF.lineageTab === "graph") {
-      graphWrap.hidden = false; view.hidden = true;
-      requestAnimationFrame(drawGraph);
-    } else {
-      graphWrap.hidden = true; view.hidden = false;
-      if (pfCy) { pfCy.destroy(); pfCy = null; }
-      if (PF.lineageTab === "table") renderTableView(view);
-      if (PF.lineageTab === "formula") renderFormulaView(view);
-      if (PF.lineageTab === "impact") renderImpactView(view);
+  function traceSummaryHtml(hl) {
+    const depth = hl.maxDepth;
+    if (hl.boundaries && hl.boundaries.length) {
+      const b = hl.boundaries[0];
+      const tname = tableName(b.table);
+      const grp = (PF.model.byId[b.table] || {}).group || "code";
+      return `<div class="pf-trace warn">
+        <div class="pf-trace-ic">◐</div>
+        <div class="pf-trace-tx"><b>Traced ${depth} hop${depth === 1 ? "" : "s"} upstream</b> to <span class="mono">${esc(tname)}.${esc(b.column)}</span> — then the trail enters a <b>grey zone</b>.
+          <span class="pf-trace-dim">Beyond this point the value is computed inside ${esc(tname)} (${esc(grp)}); the per-field formula isn't statically visible. This is where we bring in <b>AI plus a manual review of run logs and the data catalogue</b> to close the connection.</span>
+          <div id="pfTraceAiOut"></div></div>
+        <button class="pf-btn ai sm" id="pfTraceAi">✦ Close the gap with AI</button>
+      </div>`;
     }
+    const origins = (hl.origins || []).map((k) => `${tableName(keyTable(k))}.${keyCol(k)}`);
+    return `<div class="pf-trace ok">
+      <div class="pf-trace-ic">✓</div>
+      <div class="pf-trace-tx"><b>Fully traced — ${depth} hop${depth === 1 ? "" : "s"} back to source.</b>
+        <span class="pf-trace-dim">Every hop is backed by code. Origin field${origins.length === 1 ? "" : "s"}: <span class="mono">${esc(origins.join(", ") || "—")}</span>.</span></div>
+    </div>`;
   }
 
-  function coverageStats(lin) {
-    let verified = 0, unresolved = 0;
-    lin.nodes.forEach((n) => { if (n.role === "boundary" && !n.aiInferred) unresolved++; else verified++; });
-    return { verified, unresolved };
-  }
-
-  function nodeType(n) {
-    if (n.role === "report") return "report";
-    if (n.role === "boundary") return "code";
-    if (n.role === "source") return "source";
-    return "calc";
-  }
-
+  // --------------------------------------------------------------- graph
   function drawGraph() {
-    const lin = PF.lineage;
     if (pfCy) { pfCy.destroy(); pfCy = null; }
-    const els = [];
-    lin.nodes.forEach((n) => {
-      const ty = nodeType(n);
-      els.push({ data: {
-        id: n.key, label: n.col, ds: dsName(n.dsId), ty,
-        unresolved: n.role === "boundary" && !n.aiInferred ? 1 : 0,
-      } });
-    });
-    lin.edges.forEach((e, i) => els.push({ data: { id: "e" + i, source: e.from, target: e.to } }));
-
-    const nodeW = (lbl) => {
-      const longest = String(lbl).split("\n").reduce((m, l) => Math.max(m, l.length), 0);
-      return Math.max(96, Math.min(188, longest * 7 + 30));
+    const m = PF.model;
+    const cs = getComputedStyle($("platform"));
+    const V = (n, d) => (cs.getPropertyValue(n).trim() || d);
+    const P = {
+      surf: V("--pf-surface", "#ffffff"),
+      surf2: V("--pf-surface-2", "#f3f6fb"),
+      border: V("--pf-border", "#dde3ee"),
+      text: V("--pf-text", "#10203a"),
+      dim: V("--pf-text-dim", "#55647e"),
+      accent: V("--pf-accent", "#2f6bff"),
     };
-    const nodeH = (lbl) => 26 + String(lbl).split("\n").length * 16;
+    const charW = 7.3, HDR = 30, ROW = 22, GY = 48, GX = 140, PADB = 12;
+    const tW = (t) => {
+      const maxLen = Math.max(t.name.length, ...t.columns.map((c) => c.length), 9);
+      return Math.min(266, Math.max(172, maxLen * charW + 30));
+    };
+    const stages = [...new Set(m.tables.map((t) => t.stage))].sort((a, b) => a - b);
+    const byStage = {}; stages.forEach((s) => byStage[s] = m.tables.filter((t) => t.stage === s));
+    const stageX = {}; let x = 0;
+    stages.forEach((s) => { const w = Math.max(...byStage[s].map(tW)); stageX[s] = x; x += w + GX; });
+    const pos = {}, box = {};
+    stages.forEach((s) => {
+      const list = byStage[s];
+      const heights = list.map((t) => HDR + t.columns.length * ROW + PADB);
+      const total = heights.reduce((a, b) => a + b, 0) + GY * Math.max(0, list.length - 1);
+      let y = -total / 2;
+      list.forEach((t, ti) => {
+        const w = tW(t), cx = stageX[s] + w / 2, topY = y;
+        pos[t.id + "__hdr"] = { x: cx, y: topY + HDR / 2 };
+        t.columns.forEach((c, ci) => { pos[t.id + "." + c] = { x: cx, y: topY + HDR + ci * ROW + ROW / 2 }; });
+        box[t.id] = { w, cx, topY, h: heights[ti] };
+        y += heights[ti] + GY;
+      });
+    });
+
+    const els = [];
+    m.tables.forEach((t) => {
+      els.push({ data: { id: t.id, ntype: "parent", kind: t.kind } });
+      els.push({ data: { id: t.id + "__hdr", parent: t.id, label: t.name, kind: t.kind, tableId: t.id }, position: pos[t.id + "__hdr"], classes: "hdr" });
+      t.columns.forEach((c) => {
+        const key = t.id + "." + c;
+        const cls = ["col"];
+        if (PF.hl.cols.has(key)) cls.push("hot");
+        if (key === PF.focusKey) cls.push("focus");
+        els.push({ data: { id: key, parent: t.id, label: c, tableId: t.id, col: c }, position: pos[key], classes: cls.join(" ") });
+      });
+    });
+    m.columnEdges.forEach((e, i) => {
+      els.push({ data: { id: "ce" + i, source: e.from, target: e.to, ntype: "cedge" }, classes: PF.hl.edges.has(e.from + ">" + e.to) ? "hot" : "" });
+    });
+    m.tableEdges.forEach((e, i) => {
+      els.push({ data: { id: "te" + i, source: e.from, target: e.to, ntype: "bedge", blabel: e.boundary ? "AI + manual" : "" }, classes: "bedge" + (PF.hl.boundaryEdges.has(e.from + ">" + e.to) ? " hot" : "") });
+    });
 
     pfCy = cytoscape({
       container: $("pfGraph"),
       elements: els,
       style: [
-        { selector: "node", style: {
-          "shape": "round-rectangle",
-          "background-color": (n) => NTYPE[n.data("ty")].c,
-          "border-width": 0,
-          "label": (n) => n.data("label") + "\n" + n.data("ds"),
-          "color": "#fff", "font-size": 11, "font-weight": 600, "line-height": 1.3,
-          "text-valign": "center", "text-halign": "center", "text-wrap": "wrap",
-          "text-max-width": 168,
-          "width": (n) => nodeW(n.data("label") + "\n" + n.data("ds")),
-          "height": (n) => nodeH(n.data("label") + "\n" + n.data("ds")),
-          "padding": 6,
-        } },
-        { selector: "node[unresolved = 1]", style: {
-          "border-width": 3, "border-color": "#ffffff", "border-style": "dashed" } },
-        { selector: "node:selected", style: { "border-width": 3, "border-color": "#0f1b2d" } },
-        { selector: "edge", style: {
-          "width": 2, "line-color": "#9aa7b8", "target-arrow-color": "#9aa7b8",
-          "target-arrow-shape": "triangle", "curve-style": "bezier", "arrow-scale": 1, "opacity": 0.85 } },
+        { selector: "node:parent", style: {
+          "background-color": P.surf2, "background-opacity": 0.5,
+          "border-width": 1, "border-color": P.border, "shape": "round-rectangle", "padding": 3, "label": "" } },
+        { selector: "node.hdr", style: {
+          "background-color": (n) => (KIND[n.data("kind")] || KIND.stage).c,
+          "label": "data(label)", "color": "#fff", "font-size": 11.5, "font-weight": 700,
+          "text-valign": "center", "text-halign": "center", "text-wrap": "wrap", "text-max-width": 240,
+          "width": (n) => box[n.data("tableId")].w - 4, "height": HDR - 4, "shape": "round-rectangle" } },
+        { selector: "node.col", style: {
+          "background-color": P.surf, "border-width": 1, "border-color": P.border,
+          "label": "data(label)", "color": P.dim, "font-size": 10.5, "font-family": "ui-monospace, Menlo, monospace",
+          "text-valign": "center", "text-halign": "left", "text-margin-x": 9, "text-wrap": "none",
+          "width": (n) => box[n.data("tableId")].w - 14, "height": ROW - 4, "shape": "round-rectangle" } },
+        { selector: "node.col.hot", style: {
+          "border-color": P.accent, "border-width": 1.6, "background-color": P.accent, "background-opacity": 0.14,
+          "color": P.text, "font-weight": 700 } },
+        { selector: "node.col.focus", style: {
+          "background-color": P.accent, "background-opacity": 1, "color": "#fff", "border-color": P.accent, "border-width": 2 } },
+        { selector: "node.faded", style: { "opacity": 0.13 } },
+        { selector: "node.ghost", style: { "opacity": 0.5 } },
+        { selector: "edge[ntype = 'cedge']", style: {
+          "width": 1.4, "line-color": P.border, "target-arrow-color": P.border,
+          "target-arrow-shape": "triangle", "arrow-scale": 0.8, "curve-style": "bezier", "opacity": 0.85 } },
+        { selector: "edge[ntype = 'cedge'].hot", style: {
+          "width": 2.6, "line-color": P.accent, "target-arrow-color": P.accent, "opacity": 1, "z-index": 20 } },
+        { selector: "edge[ntype = 'bedge']", style: {
+          "width": 2, "line-color": "#d97706", "target-arrow-color": "#d97706",
+          "target-arrow-shape": "triangle", "arrow-scale": 0.9, "curve-style": "bezier", "line-style": "dashed",
+          "label": "data(blabel)", "font-size": 9, "color": "#d97706",
+          "text-background-color": P.surf, "text-background-opacity": 1, "text-background-padding": 2, "opacity": 0.9 } },
+        { selector: "edge.faded", style: { "opacity": 0.1 } },
       ],
-      layout: { name: "dagre", rankDir: "LR", nodeSep: 26, rankSep: 90, padding: 36 },
+      layout: { name: "preset", fit: false },
       wheelSensitivity: 0.2,
     });
-    pfCy.on("tap", "node", (evt) => openInspector(evt.target.data("id")));
-    pfCy.ready(() => pfCy.fit(undefined, 40));
+    pfCy.on("tap", "node.hdr", (ev) => openPanel(ev.target.data("tableId"), null, "table"));
+    pfCy.on("tap", "node.col", (ev) => openPanel(ev.target.data("tableId"), ev.target.data("col"), "column"));
+    applyFade();
+    const fit = () => { if (pfCy) { pfCy.resize(); pfCy.fit(undefined, 48); } };
+    requestAnimationFrame(() => requestAnimationFrame(fit));
+    setTimeout(fit, 120);
+  }
+
+  function applyFade() {
+    if (!pfCy) return;
+    const hl = PF.hl;
+    if (PF.showFullTable) { pfCy.elements().removeClass("faded ghost"); return; }
+    pfCy.batch(() => {
+      pfCy.nodes(".col").forEach((n) => n.toggleClass("faded", !hl.cols.has(n.id())));
+      pfCy.nodes(".hdr").forEach((n) => {
+        const t = n.data("tableId");
+        n.removeClass("faded ghost");
+        if (hl.pathTables.has(t)) { /* keep */ }
+        else if (hl.contextTables.has(t)) n.addClass("ghost");
+        else n.addClass("faded");
+      });
+      pfCy.nodes(":parent").forEach((n) => {
+        const t = n.id();
+        n.toggleClass("faded", !(hl.pathTables.has(t) || hl.contextTables.has(t)));
+      });
+      pfCy.edges("[ntype = 'cedge']").forEach((e) => e.toggleClass("faded", !hl.edges.has(e.data("source") + ">" + e.data("target"))));
+      pfCy.edges("[ntype = 'bedge']").forEach((e) => e.toggleClass("faded", !hl.boundaryEdges.has(e.data("source") + ">" + e.data("target"))));
+    });
   }
 
   function exportLineage() {
-    const rows = [["field", "dataset", "role", "produced_by", "file", "lines", "state"]];
-    PF.lineage.nodes.forEach((n) => rows.push([
-      n.col, dsName(n.dsId), nodeType(n),
-      n.op ? (n.op.language + ":" + n.op.kind) : "source",
-      n.op ? n.op.file : "", n.op ? n.op.line_start + "-" + n.op.line_end : "",
-      n.role === "boundary" ? (n.aiInferred ? "inferred" : "unresolved") : "verified",
-    ]));
+    const m = PF.model, hl = PF.hl;
+    const rows = [["field", "table", "kind", "in_highlighted_path", "upstream_fields"]];
+    m.tables.forEach((t) => t.columns.forEach((c) => {
+      const key = t.id + "." + c;
+      const ups = (m.inAdj.get(key) || []).map((k) => tableName(keyTable(k)) + "." + keyCol(k)).join(" | ");
+      rows.push([c, t.name, t.kind, hl.cols.has(key) ? "yes" : "no", ups]);
+    }));
     const csv = rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\n");
     const a = document.createElement("a");
     a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
@@ -718,232 +779,184 @@
     a.click();
   }
 
-  function stateTag(n) {
-    if (n.role === "boundary") return n.aiInferred
-      ? `<span class="pf-state inferred">◆ AI-inferred</span>`
-      : `<span class="pf-state unresolved">✕ Unresolved</span>`;
-    if (n.role === "report" || n.role === "source") return `<span class="pf-state verified">✓ Verified</span>`;
-    return `<span class="pf-state verified">✓ Verified</span>`;
+  // ---------------------------------------------------------- node panel
+  function panelEmptyHtml() {
+    return `<div class="pf-inspect-empty">
+      <div class="big">◉</div>
+      <p>Select a <b>table header</b> or a <b>field</b> in the graph.</p>
+      <p class="dim">You'll see the column lineage and the table details — each with the exact code that builds it.</p>
+    </div>`;
   }
 
-  function renderTableView(view) {
-    const lin = PF.lineage;
-    view.innerHTML = `<div class="pf-card"><div class="pf-table-wrap"><table class="pf-hop-table">
-      <thead><tr><th>Field</th><th>Dataset</th><th>Node type</th><th>Transformation</th><th>Evidence</th><th>Coverage</th></tr></thead>
-      <tbody>${lin.order.map((k) => {
-        const n = lin.nodes.get(k);
-        const ty = nodeType(n);
-        return `<tr data-key="${esc(k)}" style="cursor:pointer">
-          <td class="pf-mono" style="color:var(--pf-text);font-weight:600">${esc(n.col)}</td>
-          <td class="pf-mono">${esc(dsName(n.dsId))}</td>
-          <td><span class="pf-dot" style="background:${NTYPE[ty].c}"></span>${NTYPE[ty].label}</td>
-          <td>${n.op ? `${LANG_LABEL[n.op.language] || n.op.language} · ${esc(n.op.kind)}` : "raw source"}</td>
-          <td class="pf-mono" style="font-size:11.5px">${n.op ? fileLoc(n.op) : "—"}</td>
-          <td>${stateTag(n)}</td></tr>`;
-      }).join("")}</tbody></table></div></div>`;
-    view.querySelectorAll("[data-key]").forEach((r) => r.onclick = () => openInspector(r.dataset.key));
+  function openPanel(tableId, col, tab) {
+    const t = PF.model.byId[tableId];
+    if (!t) return;
+    if (!col) col = t.columns.find((c) => PF.hl.cols.has(tableId + "." + c)) || t.columns[0];
+    PF.inspect = { tableId, col, tab: tab || "column" };
+    renderPanel();
+    if (pfCy) {
+      pfCy.nodes().unselect();
+      const el = pfCy.getElementById(tableId + "." + col);
+      if (el && el.length) el.select();
+    }
   }
 
-  function renderFormulaView(view) {
-    const lin = PF.lineage;
-    const derived = lin.order.map((k) => lin.nodes.get(k)).filter((n) => n.role === "report" || n.role === "calc" || n.role === "boundary");
-    view.innerHTML = `<div class="pf-formula">${derived.map((n) => {
-      if (n.role === "boundary") {
-        return `<div class="pf-fcard"><div class="pf-fcard-head"><span class="pf-dot" style="background:${NTYPE.code.c}"></span><span class="mono">${esc(n.col)}</span>${stateTag(n)}</div>
-          <div class="pf-fexpr" style="color:var(--pf-muted)">Computed inside ${LANG_LABEL[n.op ? n.op.language : ""] || "code"} — the static parser cannot read this formula. Open the node and resolve it with AI to recover the expression.</div></div>`;
-      }
-      const srcs = (n.sources || []).map((s) => { const sp = splitCol(s); return sp.col; });
-      return `<div class="pf-fcard"><div class="pf-fcard-head"><span class="pf-dot" style="background:${NTYPE[nodeType(n)].c}"></span><span class="mono">${esc(n.col)}</span>${n.op ? `<span class="pf-chip">${LANG_LABEL[n.op.language] || n.op.language}</span>` : ""}</div>
-        <div class="pf-fexpr"><span class="op">${esc(n.col)}</span> = ${srcs.map((s) => `<span class="src">${esc(s)}</span>`).join(" <span class='op'>·</span> ") || "—"}</div>
-        ${n.op ? codeBlock(n.op, n.col) : ""}
-      </div>`;
-    }).join("")}</div>`;
-  }
-
-  function renderImpactView(view) {
-    // Downstream of the deepest resolvable source field feeding this CDE.
-    const lin = PF.lineage;
-    // Upstream-most fields = nodes that never feed anything further upstream.
-    const fromSet = new Set(lin.edges.map((e) => e.from));
-    const leaves = lin.order.map((k) => lin.nodes.get(k)).filter((n) => !fromSet.has(n.key));
-    const seed = leaves[0] || lin.nodes.get(lin.order[lin.order.length - 1]);
-    const chooser = leaves.map((n) => `<button class="pf-chip" style="cursor:pointer;padding:6px 11px" data-k="${esc(n.key)}">${esc(n.col)} <span style="color:var(--pf-muted-2)">· ${esc(dsName(n.dsId))}</span></button>`).join("");
-    const chain = buildDownstream(seed.dsId, seed.col);
-    const reports = PF.reports || [];
-    view.innerHTML = `
-      <div class="pf-resolve-head"><h2>Downstream impact</h2>
-        <p>If this source field changes, everything below is affected — up to the reported CDE and the regulatory submission it feeds.</p></div>
-      <div style="margin-bottom:14px"><div class="pf-section-label">Pick a source field</div><div style="display:flex;flex-wrap:wrap;gap:8px">${chooser}</div></div>
-      <div class="pf-card"><div class="pf-card-head"><div><h3>${esc(seed.col)}</h3><div class="sub">${esc(dsName(seed.dsId))} — feeds ${chain.length} downstream field(s)</div></div></div>
-      <div class="pf-table-wrap"><table class="pf-hop-table"><thead><tr><th>Affected field</th><th>Dataset</th><th>Produced by</th></tr></thead>
-      <tbody>${chain.map((h) => `<tr><td class="pf-mono" style="color:var(--pf-text);font-weight:600">${esc(h.col)}</td><td class="pf-mono">${esc(dsName(h.ds))}</td><td>${h.op ? (LANG_LABEL[h.op.language] || h.op.language) + " · " + esc(h.op.kind) : "—"}</td></tr>`).join("") || `<tr><td colspan="3" style="color:var(--pf-muted)">No downstream fields in scope.</td></tr>`}</tbody></table></div>
-      <div style="padding:14px 18px;border-top:1px solid var(--pf-border);font-size:12.5px;color:var(--pf-text-dim)">
-        <span class="pf-state verified">Reported CDE</span> &nbsp; <b>${esc(PF.cde.business_name)}</b> in <b>${esc((PF.pack.report || {}).name || "")}</b>
-      </div></div>`;
-    view.querySelectorAll("[data-k]").forEach((b) => b.onclick = () => {
-      const n = lin.nodes.get(b.dataset.k);
-      const chain2 = buildDownstream(n.dsId, n.col);
-      renderImpactFor(view, n, chain2);
-    });
-  }
-
-  function renderImpactFor(view, n, chain) {
-    const card = view.querySelector(".pf-card");
-    card.querySelector(".pf-card-head h3").textContent = n.col;
-    card.querySelector(".pf-card-head .sub").textContent = dsName(n.dsId) + " — feeds " + chain.length + " downstream field(s)";
-    card.querySelector("tbody").innerHTML = chain.map((h) => `<tr><td class="pf-mono" style="color:var(--pf-text);font-weight:600">${esc(h.col)}</td><td class="pf-mono">${esc(dsName(h.ds))}</td><td>${h.op ? (LANG_LABEL[h.op.language] || h.op.language) + " · " + esc(h.op.kind) : "—"}</td></tr>`).join("") || `<tr><td colspan="3" style="color:var(--pf-muted)">No downstream fields in scope.</td></tr>`;
-  }
-
-  // =====================================================================
-  //  Screens 5 & 6 · Node inspector (overview / code / inputs / outputs)
-  // =====================================================================
-  function openInspector(key, tab) {
-    const n = PF.lineage.nodes.get(key);
-    if (!n) return;
-    PF.inspectKey = key;
-    PF.inspectTab = tab || "overview";
-    renderInspector();
-    if (pfCy) { pfCy.nodes().unselect(); const el = pfCy.getElementById(key); if (el) el.select(); }
-  }
-
-  function renderInspector() {
+  function renderPanel() {
     const host = $("pfInspectHost");
-    const n = PF.lineage.nodes.get(PF.inspectKey);
-    if (!n) { host.innerHTML = ""; return; }
-    const ty = nodeType(n);
-    const tabs = [["overview", "Overview"], ["code", "Code"], ["inputs", "Inputs"], ["outputs", "Outputs"]];
+    const ins = PF.inspect;
+    if (!ins) { host.innerHTML = panelEmptyHtml(); return; }
+    const t = PF.model.byId[ins.tableId];
+    const kind = KIND[t.kind] || KIND.stage;
+    const tabs = [["column", "Column"], ["table", "Table"]];
     host.innerHTML = `
-      <aside class="pf-inspect">
-        <div class="pf-inspect-head">
-          <button class="close" id="pfInspectClose">×</button>
-          <span class="pf-inspect-type" style="background:${NTYPE[ty].c}">${NTYPE[ty].label}</span>
-          <h3>${esc(n.col)}</h3>
-          <div class="ds">${esc(dsName(n.dsId))}</div>
-        </div>
-        <div class="pf-inspect-tabs">${tabs.map(([k, l]) => `<button class="pf-inspect-tab ${k === PF.inspectTab ? "active" : ""}" data-t="${k}">${l}</button>`).join("")}</div>
-        <div class="pf-inspect-body" id="pfInspectBody"></div>
-      </aside>`;
-    $("pfInspectClose").onclick = () => { host.innerHTML = ""; if (pfCy) pfCy.nodes().unselect(); };
-    host.querySelectorAll(".pf-inspect-tab").forEach((t) => t.onclick = () => { PF.inspectTab = t.dataset.t; renderInspector(); });
-    renderInspectBody(n);
-  }
-
-  function renderInspectBody(n) {
-    const body = $("pfInspectBody");
-    const op = n.op;
-    if (PF.inspectTab === "code") {
-      if (!op) { body.innerHTML = `<div class="pf-empty">This is a raw source field — no producing code in scope.</div>`; return; }
-      body.innerHTML = `
-        <div class="pf-section-label">Code details</div>
-        <div class="pf-kv" style="margin-bottom:16px">
-          <div class="pf-kv-row"><span class="k">File</span><span class="v mono">${esc(op.file)}</span></div>
-          <div class="pf-kv-row"><span class="k">Lines</span><span class="v">${lineRange(op)}</span></div>
-          <div class="pf-kv-row"><span class="k">Language</span><span class="v">${LANG_LABEL[op.language] || op.language}</span></div>
-          <div class="pf-kv-row"><span class="k">Operation</span><span class="v">${esc(op.kind)}</span></div>
-          <div class="pf-kv-row"><span class="k">Confidence</span><span class="v">${esc(op.confidence)}</span></div>
-        </div>
-        ${codeBlock(op, n.col)}
-        <div style="height:12px"></div>
-        <button class="pf-btn sm" id="pfDownload">⤓ Download file</button>`;
-      const d = $("pfDownload");
-      if (d) d.onclick = () => downloadSource(op);
-      return;
-    }
-    if (PF.inspectTab === "inputs") {
-      const srcs = n.sources || [];
-      body.innerHTML = `<div class="pf-section-label">Input fields (${srcs.length})</div><div class="pf-io-list">${srcs.map((s) => { const sp = splitCol(s); return `<div class="pf-io"><span class="mono">${esc(sp.col)}</span><span class="ds">${esc(sp.ds ? dsName(sp.ds) : "")}</span></div>`; }).join("") || `<div class="pf-empty" style="padding:24px">No resolved inputs — this is a boundary or a raw source.</div>`}</div>`;
-      return;
-    }
-    if (PF.inspectTab === "outputs") {
-      const outs = op ? (op.columns || []) : [];
-      body.innerHTML = `<div class="pf-section-label">Output columns of ${esc(dsName(n.dsId))} (${outs.length})</div><div class="pf-io-list">${outs.map((o) => `<div class="pf-io"><span class="mono">${esc(o)}</span></div>`).join("") || `<div class="pf-empty" style="padding:24px">No output projection captured.</div>`}</div>`;
-      return;
-    }
-    // overview
-    let logic = "";
-    if (n.role === "report") logic = "The reported figure published to the regulatory template.";
-    else if (n.role === "source") logic = "A raw source field read directly from the system of record.";
-    else if (n.role === "boundary") logic = "Produced inside a " + (LANG_LABEL[op ? op.language : ""] || "code") + " step the static parser can only resolve at table level.";
-    else logic = "A derived field calculated from upstream inputs.";
-    body.innerHTML = `
-      <div class="pf-section-label">Business logic</div>
-      <p style="font-size:13px;line-height:1.55;color:var(--pf-text-dim);margin:0 0 16px">${esc(logic)}</p>
-      <div class="pf-section-label">Transformation</div>
-      <div class="pf-kv" style="margin-bottom:16px">
-        <div class="pf-kv-row"><span class="k">Type</span><span class="v">${NTYPE[nodeType(n)].label}</span></div>
-        <div class="pf-kv-row"><span class="k">Implemented in</span><span class="v mono">${op ? esc(op.file) : "—"}</span></div>
-        <div class="pf-kv-row"><span class="k">Coverage</span><span class="v">${stateTag(n)}</span></div>
+      <div class="pf-inspect-head">
+        <button class="close" id="pfPanelClose">×</button>
+        <span class="pf-inspect-type" style="background:${kind.c}">${kind.label}</span>
+        <h3 class="mono">${esc(ins.tab === "table" ? t.name : ins.col)}</h3>
+        <div class="ds mono">${esc(t.name)}</div>
       </div>
-      ${n.sources && n.sources.length ? `<div class="pf-section-label">Derived from</div><div class="pf-io-list">${n.sources.map((s) => { const sp = splitCol(s); return `<div class="pf-io"><span class="mono">${esc(sp.col)}</span><span class="ds">${esc(sp.ds ? dsName(sp.ds) : "")}</span></div>`; }).join("")}</div>` : ""}
-      ${n.role === "boundary" ? aiBoxHtml(n) : ""}`;
-    if (n.role === "boundary") wireAiBox(n);
+      <div class="pf-inspect-tabs">${tabs.map(([k, l]) => `<button class="pf-inspect-tab ${k === ins.tab ? "active" : ""}" data-t="${k}">${l}</button>`).join("")}</div>
+      <div class="pf-inspect-body" id="pfPanelBody"></div>`;
+    $("pfPanelClose").onclick = () => { PF.inspect = null; host.innerHTML = panelEmptyHtml(); if (pfCy) pfCy.nodes().unselect(); };
+    host.querySelectorAll(".pf-inspect-tab").forEach((b) => b.onclick = () => { PF.inspect.tab = b.dataset.t; renderPanel(); });
+    if (ins.tab === "table") renderPanelTable(t); else renderPanelColumn(t, ins.col);
   }
 
-  function downloadSource(op) {
-    // We only have the op snippet client-side; download that as the evidence slice.
+  function renderPanelColumn(t, col) {
+    const body = $("pfPanelBody");
+    const m = PF.model;
+    const key = t.id + "." + col;
+    const ups = m.inAdj.get(key) || [];
+    const downs = m.outAdj.get(key) || [];
+    const boundary = m.tableEdges.filter((e) => e.to === t.id && e.boundary);
+    const isBoundaryCol = !ups.length && boundary.length > 0;
+    const isSource = !ups.length && t.kind === "source";
+    let state;
+    if (isBoundaryCol) state = `<span class="pf-state unresolved">◐ Grey zone — needs AI + manual</span>`;
+    else if (isSource) state = `<span class="pf-state verified">◆ Source field</span>`;
+    else state = `<span class="pf-state verified">✓ Resolved from code</span>`;
+    const chip = (k) => `<button class="pf-io clk" data-key="${esc(k)}"><span class="mono">${esc(keyCol(k))}</span><span class="ds">${esc(tableName(keyTable(k)))}</span></button>`;
+    body.innerHTML = `
+      <div class="pf-sec-row">${state}${key === PF.focusKey ? `<span class="pf-chip focus">reported figure</span>` : ""}</div>
+      <div class="pf-section-label">Derived from ${ups.length ? `(${ups.length})` : ""}</div>
+      ${ups.length ? `<div class="pf-io-list">${ups.map(chip).join("")}</div>`
+        : isBoundaryCol
+          ? `<div class="pf-greybox"><b>The upstream formula is inside ${esc(tableName(t.id))}.</b> ${esc((boundary[0] || {}).reason || "")}
+             <div class="pf-greyfeeds">Known table-level inputs: ${boundary.map((b) => `<span class="pf-chip">${esc(tableName(b.from))}</span>`).join(" ")}</div>
+             <button class="pf-btn ai sm" id="pfColAi">✦ Resolve with AI</button><div id="pfColAiOut"></div></div>`
+          : `<div class="pf-empty sm">Raw source field — no upstream in scope.</div>`}
+      <div class="pf-section-label">Feeds ${downs.length ? `(${downs.length})` : ""}</div>
+      ${downs.length ? `<div class="pf-io-list">${downs.map(chip).join("")}</div>` : `<div class="pf-empty sm">Nothing downstream in scope.</div>`}
+      <div class="pf-section-label">Code that builds this</div>
+      ${codeBlock(t.code, col)}`;
+    body.querySelectorAll(".pf-io.clk").forEach((b) => b.onclick = () => { const k = b.dataset.key; openPanel(keyTable(k), keyCol(k), "column"); });
+    const ai = $("pfColAi");
+    if (ai) ai.onclick = () => boundaryResolveAi(boundary[0], "pfColAiOut");
+  }
+
+  function renderPanelTable(t) {
+    const body = $("pfPanelBody");
+    const m = PF.model;
+    const upTables = [...new Set([
+      ...m.columnEdges.filter((e) => keyTable(e.to) === t.id).map((e) => keyTable(e.from)),
+      ...m.tableEdges.filter((e) => e.to === t.id).map((e) => e.from),
+    ])].filter((x) => x !== t.id);
+    const downTables = [...new Set([
+      ...m.columnEdges.filter((e) => keyTable(e.from) === t.id).map((e) => keyTable(e.to)),
+      ...m.tableEdges.filter((e) => e.from === t.id).map((e) => e.to),
+    ])].filter((x) => x !== t.id);
+    const kind = KIND[t.kind] || KIND.stage;
+    const tbtn = (id) => `<button class="pf-chip clk" data-tid="${esc(id)}">${esc(tableName(id))}</button>`;
+    body.innerHTML = `
+      <div class="pf-kv">
+        <div class="pf-kv-row"><span class="k">Type</span><span class="v"><span class="pf-type-badge" style="background:${kind.c}22;color:${kind.c}">${kind.label}</span></span></div>
+        <div class="pf-kv-row"><span class="k">Layer</span><span class="v">${esc(t.group || "—")}</span></div>
+        <div class="pf-kv-row"><span class="k">Columns</span><span class="v">${t.columns.length}</span></div>
+      </div>
+      <div class="pf-section-label">Columns — click to trace</div>
+      <div class="pf-collist">${t.columns.map((c) => `<button class="pf-colrow ${PF.hl.cols.has(t.id + "." + c) ? "hot" : ""}" data-col="${esc(c)}"><span class="mono">${esc(c)}</span>${PF.hl.cols.has(t.id + "." + c) ? `<span class="pf-colrow-tag">in path</span>` : ""}</button>`).join("")}</div>
+      <div class="pf-io2">
+        <div><div class="pf-section-label">Upstream tables</div>${upTables.length ? `<div class="pf-chipwrap">${upTables.map(tbtn).join("")}</div>` : `<div class="pf-empty sm">None</div>`}</div>
+        <div><div class="pf-section-label">Downstream tables</div>${downTables.length ? `<div class="pf-chipwrap">${downTables.map(tbtn).join("")}</div>` : `<div class="pf-empty sm">None</div>`}</div>
+      </div>
+      <div class="pf-section-label">Code that builds ${esc(t.name)}</div>
+      ${codeBlock(t.code, null)}
+      <div style="height:10px"></div>
+      <button class="pf-btn sm" id="pfDlCode">⤓ Download code</button>`;
+    body.querySelectorAll(".pf-colrow").forEach((b) => b.onclick = () => openPanel(t.id, b.dataset.col, "column"));
+    body.querySelectorAll(".pf-chip.clk").forEach((b) => b.onclick = () => openPanel(b.dataset.tid, null, "table"));
+    const dl = $("pfDlCode");
+    if (dl) dl.onclick = () => downloadCode(t.code);
+  }
+
+  // --------------------------------------------------------- code display
+  function highlight(line, lang) {
+    let s = esc(line);
+    s = s.replace(/(--.*$|#.*$|\/\/.*$|\/\*.*?\*\/)/g, '<span class="pf-tok-com">$1</span>');
+    s = s.replace(/(&#39;[^&]*?&#39;|&quot;[^&]*?&quot;)/g, '<span class="pf-tok-str">$1</span>');
+    s = s.replace(/\b(\d+\.?\d*)\b/g, '<span class="pf-tok-num">$1</span>');
+    const kw = /\b(CREATE|TABLE|VIEW|AS|SELECT|FROM|WHERE|JOIN|LEFT|RIGHT|INNER|CROSS|FULL|OUTER|ON|GROUP|ORDER|BY|HAVING|SUM|COUNT|AVG|MIN|MAX|ROUND|COALESCE|NULLIF|CASE|WHEN|THEN|ELSE|END|DECIMAL|PRIMARY|KEY|data|set|run|proc|sql|quit|into|merge|if|then|else|def|import|return|groupby|agg|mean|size)\b/gi;
+    s = s.replace(kw, '<span class="pf-tok-kw">$1</span>');
+    s = s.replace(/(%\w+)/g, '<span class="pf-tok-mac">$1</span>');
+    return s;
+  }
+
+  function codeBlock(code, hotCol) {
+    if (!code || !code.text) return `<div class="pf-empty sm">No code captured for this node.</div>`;
+    const lines = String(code.text).split("\n");
+    const start = code.line_start || 1;
+    const hot = hotCol ? String(hotCol).toLowerCase() : null;
+    return `
+      <div class="pf-code-wrap">
+        <div class="pf-codehead"><span class="mono">${esc(code.file || "")}</span><span class="pf-lg">${esc(LANG_LABEL[code.lang] || code.lang || "")}</span></div>
+        <pre class="pf-code">${lines.map((ln, i) => {
+          const isHot = hot && ln.toLowerCase().includes(hot);
+          return `<div class="ln ${isHot ? "hot" : ""}"><span class="no">${start + i}</span><span class="tx">${highlight(ln, code.lang)}</span></div>`;
+        }).join("")}</pre>
+      </div>`;
+  }
+
+  function downloadCode(code) {
+    if (!code) return;
     const a = document.createElement("a");
-    a.href = URL.createObjectURL(new Blob([op.snippet || ""], { type: "text/plain" }));
-    a.download = op.file || "evidence.txt";
+    a.href = URL.createObjectURL(new Blob([code.text || ""], { type: "text/plain" }));
+    a.download = (code.file || "code.txt").split(/[ ·]/)[0] || "code.txt";
     a.click();
   }
 
-  // =====================================================================
-  //  AI resolve for an unresolved (boundary) node
-  // =====================================================================
-  function aiBoxHtml(n) {
-    if (n.aiInferred && n.aiProposal) return aiResultHtml(n.aiProposal);
-    return `
-      <div class="pf-ai-box" id="pfAiBox">
-        <h4>✦ Unresolved cross-language boundary</h4>
-        <p>The field-level trace stops here because this value is computed in ${LANG_LABEL[n.op ? n.op.language : ""] || "code"}.
-           Let the AI reviewer read the code and recover the formula and its contributing fields.</p>
-        <button class="pf-btn ai" id="pfAiRun">✦ Resolve with AI</button>
-        <div id="pfAiOut"></div>
-      </div>`;
-  }
-  function wireAiBox(n) {
-    const run = $("pfAiRun");
-    if (run) run.onclick = () => resolveWithAi(n);
-  }
-  async function resolveWithAi(n) {
-    const out = $("pfAiOut");
-    out.innerHTML = `<div style="margin-top:12px;color:var(--pf-text-dim);font-size:12.5px"><span class="pf-spin"></span> Reading the code and reconstructing lineage…</div>`;
+  // ------------------------------------------------- grey-zone AI resolve
+  async function boundaryResolveAi(bEdge, outId) {
+    const out = $(outId);
+    if (out) out.innerHTML = `<div class="pf-ai-run"><span class="pf-spin"></span> Reading the code and reconstructing the field formula…</div>`;
     try {
       if (!PF.aiProposals) {
         const res = await fetch("/api/agent/review", {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ result: PF.result }),
         });
-        if (res.status === 401 || res.status === 403) { out.innerHTML = `<div class="pf-ai-warn">AI review needs the server GROQ_API_KEY to be configured.</div>`; return; }
+        if (res.status === 401 || res.status === 403) { if (out) out.innerHTML = `<div class="pf-ai-warn">AI review needs the server <code>GROQ_API_KEY</code> to be configured.</div>`; return; }
         const data = await res.json();
         PF.aiProposals = data.proposals || [];
       }
-      // match a proposal to the op that produces this boundary dataset
-      const op = opFor(n.dsId);
-      const prop = (PF.aiProposals || []).find((p) => p.op_id === (op && op.id)) ||
-        (PF.aiProposals || []).find((p) => (p.proposed_target || "").includes(n.dsId));
-      if (!prop) { out.innerHTML = `<div class="pf-ai-warn">The AI reviewer did not return a confident reconstruction for this step.</div>`; return; }
-      n.aiInferred = true; n.aiProposal = prop;
-      out.innerHTML = aiResultHtml(prop);
-      if (pfCy) { const el = pfCy.getElementById(n.key); if (el) el.data("unresolved", 0); }
-      const s = coverageStats(PF.lineage);
-      const badge = document.querySelector(".pf-lineage-bar .pf-state");
-      if (badge) { badge.textContent = s.verified + " verified · " + s.unresolved + " unresolved"; badge.className = "pf-state " + (s.unresolved ? "unresolved" : "verified"); }
+      const tgt = bEdge ? String(tableName(bEdge.to)).toLowerCase() : "";
+      const prop = (PF.aiProposals || []).find((p) => (p.proposed_target || "").toLowerCase().includes(tgt.split(".").pop()))
+        || (PF.aiProposals || [])[0];
+      if (!prop) { if (out) out.innerHTML = `<div class="pf-ai-warn">The AI reviewer did not return a confident reconstruction.</div>`; return; }
+      if (out) out.innerHTML = aiResultHtml(prop);
     } catch (e) {
-      out.innerHTML = `<div class="pf-ai-warn">AI resolve failed: ${esc(e.message || e)}</div>`;
+      if (out) out.innerHTML = `<div class="pf-ai-warn">AI resolve failed: ${esc(e.message || e)}</div>`;
     }
   }
+
   function aiResultHtml(p) {
     const ins = (p.proposed_inputs || []).join(", ");
     const cols = (p.columns || []).slice(0, 8).join(", ");
-    return `
-      <div class="pf-ai-result">
-        <span class="pf-ai-badge">✦ AI-inferred · ${Math.round((p.confidence || 0) * 100)}% confidence</span>
-        <div class="pf-ai-flow">${esc(ins || "inputs")} &nbsp;→&nbsp; <b>${esc(p.proposed_target || "")}</b></div>
-        ${cols ? `<div style="font-size:12px;color:var(--pf-muted);margin-bottom:8px">Fields: <span class="pf-mono">${esc(cols)}</span></div>` : ""}
-        <div class="pf-ai-rat">${esc(p.rationale || "")}</div>
-        ${(p.assumptions || []).length ? `<div style="font-size:11.5px;color:var(--pf-muted)">Assumptions: ${esc((p.assumptions || []).join("; "))}</div>` : ""}
-      </div>`;
+    return `<div class="pf-ai-result">
+      <span class="pf-ai-badge">✦ AI-inferred · ${Math.round((p.confidence || 0) * 100)}%</span>
+      <div class="pf-ai-flow">${esc(ins || "inputs")} &nbsp;→&nbsp; <b>${esc(p.proposed_target || "")}</b></div>
+      ${cols ? `<div class="pf-ai-cols">Fields: <span class="mono">${esc(cols)}</span></div>` : ""}
+      <div class="pf-ai-rat">${esc(p.rationale || "")}</div>
+    </div>`;
   }
 
   // =====================================================================
@@ -956,10 +969,9 @@
     const steps = [
       { k: "reports", n: 1, label: "Reports" },
       { k: "report", n: 2, label: (PF.pack && PF.pack.report && PF.pack.report.name) || "Report" },
-      { k: "resolve", n: 3, label: "Resolve source" },
-      { k: "lineage", n: 4, label: "Lineage" },
+      { k: "lineage", n: 3, label: "Lineage" },
     ];
-    const order = ["reports", "report", "resolve", "lineage"];
+    const order = ["reports", "report", "lineage"];
     const cur = order.indexOf(PF.step);
     bar.innerHTML = steps.map((s, i) => {
       const idx = order.indexOf(s.k);
@@ -971,7 +983,6 @@
   function goStep(step) {
     if (step === "reports") return renderReports();
     if (step === "report") return renderReport();
-    if (step === "resolve") return renderResolve();
     if (step === "lineage") return renderLineage();
   }
 

@@ -84,5 +84,74 @@
       ],
       "expected_story": "outflow_eur = balance × runoff_rate × stress_factor, computed in a SAS DATA step with a runtime scenario. The field trace stops at the SAS boundary until the AI layer recovers the formula."
     }
-  ]
+  ],
+  "lineage": {
+    "focus": {
+      "lcr": "corep_c72_lcr.lcr_ratio_pct",
+      "high_quality_liquid_assets": "corep_c72_lcr.total_hqla_eur",
+      "net_cash_outflows": "corep_c72_lcr.net_outflows_eur"
+    },
+    "tables": [
+      { "id": "raw_securities", "name": "raw.securities", "kind": "source", "group": "Securities master", "stage": 0,
+        "columns": ["isin", "asset_class", "market_value_eur", "regulatory_haircut", "encumbered_flag"],
+        "code": { "file": "securities_master · system of record", "lang": "sql", "line_start": 1,
+          "text": "-- Securities master (system of record)\nCREATE TABLE raw.securities (\n  isin                VARCHAR PRIMARY KEY,\n  asset_class         VARCHAR,\n  market_value_eur    DECIMAL(18,2),\n  regulatory_haircut  DECIMAL(5,4),\n  encumbered_flag     SMALLINT\n);" } },
+      { "id": "raw_deposits", "name": "raw.deposits", "kind": "source", "group": "Deposit system", "stage": 0,
+        "columns": ["deposit_id", "counterparty_type", "balance_eur", "product_type", "insured_flag"],
+        "code": { "file": "deposit_system · system of record", "lang": "sql", "line_start": 1,
+          "text": "-- Deposit system (system of record)\nCREATE TABLE raw.deposits (\n  deposit_id         VARCHAR PRIMARY KEY,\n  counterparty_type  VARCHAR,\n  balance_eur        DECIMAL(18,2),\n  product_type       VARCHAR,\n  insured_flag       SMALLINT\n);" } },
+      { "id": "liq_stress_scenarios", "name": "liq.stress_scenarios", "kind": "source", "group": "ALM scenarios", "stage": 0,
+        "columns": ["scenario_id", "scenario_name", "runoff_multiplier", "inflow_cap_pct"],
+        "code": { "file": "alm_stress · runtime scenario set", "lang": "sql", "line_start": 1,
+          "text": "-- ALM runtime stress scenario set\nCREATE TABLE liq.stress_scenarios (\n  scenario_id       VARCHAR,\n  scenario_name     VARCHAR,\n  runoff_multiplier DECIMAL(5,4),\n  inflow_cap_pct    DECIMAL(5,4)\n);" } },
+      { "id": "stg_hqla_securities", "name": "stg.hqla_securities", "kind": "stage", "group": "Staging (SQL)", "stage": 1,
+        "columns": ["isin", "asset_class", "market_value_eur", "regulatory_haircut", "hqla_value_eur", "eligible_flag"],
+        "code": { "file": "01_stage_hqla.sql", "lang": "sql", "line_start": 1,
+          "text": "-- 01_stage_hqla.sql  ·  post-haircut HQLA values\nCREATE TABLE stg.hqla_securities AS\nSELECT\n    isin,\n    asset_class,\n    market_value_eur,\n    regulatory_haircut,\n    -- HQLA value after supervisory haircut\n    market_value_eur * (1 - regulatory_haircut) AS hqla_value_eur,\n    CASE WHEN encumbered_flag = 0\n         AND asset_class IN ('L1','L2A','L2B')\n         THEN 1 ELSE 0 END                      AS eligible_flag\nFROM raw.securities\nWHERE encumbered_flag = 0;" } },
+      { "id": "stg_deposit_book", "name": "stg.deposit_book", "kind": "stage", "group": "Staging (SQL)", "stage": 1,
+        "columns": ["deposit_id", "counterparty_type", "balance_eur", "base_runoff_rate", "product_type"],
+        "code": { "file": "01_stage_deposits.sql", "lang": "sql", "line_start": 1,
+          "text": "-- 01_stage_deposits.sql  ·  deposit book with base runoff rates\nCREATE TABLE stg.deposit_book AS\nSELECT\n    deposit_id,\n    counterparty_type,\n    balance_eur,\n    -- base (unstressed) 30-day runoff rate by counterparty\n    CASE counterparty_type\n        WHEN 'retail_insured'   THEN 0.05\n        WHEN 'retail_uninsured' THEN 0.10\n        WHEN 'operational'      THEN 0.25\n        ELSE 0.40\n    END                        AS base_runoff_rate,\n    product_type\nFROM raw.deposits;" } },
+      { "id": "work_outflows_by_deposit", "name": "work.outflows_by_deposit", "kind": "boundary", "group": "Outflow engine (SAS)", "stage": 2,
+        "columns": ["deposit_id", "outflow_eur", "runoff_rate_applied", "stress_scenario"],
+        "code": { "file": "02_outflow_engine.sas", "lang": "sas", "line_start": 1,
+          "text": "/* 02_outflow_engine.sas  ·  LCR stressed outflow engine */\n%macro run_outflows(deposits=, scen=, out=);\n  /* pull the active runtime stress scenario */\n  proc sql noprint;\n    select runoff_multiplier into :mult\n      from &scen\n     where scenario_name = \"&g_scenario\";\n  quit;\n\n  data &out;\n    set &deposits;\n    /* stressed 30-day runoff: base rate scaled by runtime multiplier */\n    runoff_rate_applied = base_runoff_rate * &mult;\n    outflow_eur         = balance_eur * runoff_rate_applied;\n    stress_scenario     = \"&g_scenario\";\n  run;\n%mend;\n%run_outflows(deposits=stg.deposit_book, scen=liq.stress_scenarios,\n              out=work.outflows_by_deposit);" } },
+      { "id": "lcr_summary", "name": "lcr_summary", "kind": "mart", "group": "Liquidity mart (SQL)", "stage": 3,
+        "columns": ["scenario", "total_hqla_eur", "total_net_outflows_eur", "lcr_ratio"],
+        "code": { "file": "03_lcr_summary.sql", "lang": "sql", "line_start": 1,
+          "text": "-- 03_lcr_summary.sql  ·  aggregate HQLA and stressed outflows\nCREATE TABLE lcr_summary AS\nSELECT\n    o.stress_scenario                         AS scenario,\n    h.total_hqla_eur,\n    SUM(o.outflow_eur)                        AS total_net_outflows_eur,\n    h.total_hqla_eur\n      / NULLIF(SUM(o.outflow_eur), 0)         AS lcr_ratio\nFROM work.outflows_by_deposit o\nCROSS JOIN (\n    SELECT SUM(hqla_value_eur) AS total_hqla_eur\n    FROM stg.hqla_securities\n    WHERE eligible_flag = 1\n) h\nGROUP BY o.stress_scenario, h.total_hqla_eur;" } },
+      { "id": "corep_c72_lcr", "name": "corep_c72_lcr", "kind": "report", "group": "Regulatory report (SQL)", "stage": 4,
+        "columns": ["scenario", "total_hqla_eur", "net_outflows_eur", "lcr_ratio_pct"],
+        "code": { "file": "04_corep_c72_report.sql", "lang": "sql", "line_start": 1,
+          "text": "-- 04_corep_c72_report.sql  ·  COREP C72.00 template\nCREATE TABLE corep_c72_lcr AS\nSELECT\n    scenario,\n    total_hqla_eur,\n    total_net_outflows_eur          AS net_outflows_eur,\n    ROUND(lcr_ratio * 100, 2)       AS lcr_ratio_pct\nFROM lcr_summary;" } }
+    ],
+    "columnEdges": [
+      { "from": "raw_securities.market_value_eur", "to": "stg_hqla_securities.hqla_value_eur" },
+      { "from": "raw_securities.regulatory_haircut", "to": "stg_hqla_securities.hqla_value_eur" },
+      { "from": "raw_securities.market_value_eur", "to": "stg_hqla_securities.market_value_eur" },
+      { "from": "raw_securities.regulatory_haircut", "to": "stg_hqla_securities.regulatory_haircut" },
+      { "from": "raw_securities.isin", "to": "stg_hqla_securities.isin" },
+      { "from": "raw_securities.asset_class", "to": "stg_hqla_securities.asset_class" },
+      { "from": "raw_securities.encumbered_flag", "to": "stg_hqla_securities.eligible_flag" },
+      { "from": "raw_securities.asset_class", "to": "stg_hqla_securities.eligible_flag" },
+      { "from": "raw_deposits.deposit_id", "to": "stg_deposit_book.deposit_id" },
+      { "from": "raw_deposits.counterparty_type", "to": "stg_deposit_book.counterparty_type" },
+      { "from": "raw_deposits.balance_eur", "to": "stg_deposit_book.balance_eur" },
+      { "from": "raw_deposits.counterparty_type", "to": "stg_deposit_book.base_runoff_rate" },
+      { "from": "raw_deposits.product_type", "to": "stg_deposit_book.product_type" },
+      { "from": "stg_hqla_securities.hqla_value_eur", "to": "lcr_summary.total_hqla_eur" },
+      { "from": "work_outflows_by_deposit.outflow_eur", "to": "lcr_summary.total_net_outflows_eur" },
+      { "from": "work_outflows_by_deposit.stress_scenario", "to": "lcr_summary.scenario" },
+      { "from": "stg_hqla_securities.hqla_value_eur", "to": "lcr_summary.lcr_ratio" },
+      { "from": "work_outflows_by_deposit.outflow_eur", "to": "lcr_summary.lcr_ratio" },
+      { "from": "lcr_summary.scenario", "to": "corep_c72_lcr.scenario" },
+      { "from": "lcr_summary.total_hqla_eur", "to": "corep_c72_lcr.total_hqla_eur" },
+      { "from": "lcr_summary.total_net_outflows_eur", "to": "corep_c72_lcr.net_outflows_eur" },
+      { "from": "lcr_summary.lcr_ratio", "to": "corep_c72_lcr.lcr_ratio_pct" }
+    ],
+    "tableEdges": [
+      { "from": "stg_deposit_book", "to": "work_outflows_by_deposit", "boundary": true, "reason": "Per-deposit stressed outflow is computed in a SAS DATA step; the base runoff rate is scaled by a runtime stress multiplier (&mult) that is selected at execution, so the static parser cannot bind the per-row formula — this is where AI + a manual review of the run logs and ALM scenario catalogue close the gap." },
+      { "from": "liq_stress_scenarios", "to": "work_outflows_by_deposit", "boundary": true, "reason": "The active stress scenario and its runoff multiplier are chosen at runtime inside the SAS macro via a macro variable; the selection and scaling logic is not statically visible." }
+    ]
+  }
 }
