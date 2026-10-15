@@ -1,6 +1,7 @@
 """FastAPI entry point for the Lineis lineage prototype."""
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -39,6 +40,17 @@ def _current_user_id(request: Request) -> int | None:
     return request.session.get("user_id")
 
 
+def _load_report_pack(directory: Path) -> dict | None:
+    """Return the CDE catalogue shipped alongside a batch, if present."""
+    pack = directory / "report_pack.json"
+    if not pack.is_file():
+        return None
+    try:
+        return json.loads(pack.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
 def _parse_dir(directory: Path, dialect: str) -> JSONResponse:
     payload: list[tuple[str, str]] = []
     if directory.exists():
@@ -48,7 +60,11 @@ def _parse_dir(directory: Path, dialect: str) -> JSONResponse:
     if not payload:
         return JSONResponse(analyze(ParseResult(
             warnings=[f"No code files found in {directory.name}/"])))
-    return JSONResponse(analyze(parse_many(payload, dialect=dialect)))
+    result = analyze(parse_many(payload, dialect=dialect))
+    report_pack = _load_report_pack(directory)
+    if report_pack is not None:
+        result["report_pack"] = report_pack
+    return JSONResponse(result)
 
 
 @app.get("/")
@@ -66,14 +82,61 @@ def list_batches() -> JSONResponse:
                 continue
             langs = sorted({f.suffix.lower().lstrip(".") for f in files})
             lines = sum(len(f.read_text(encoding="utf-8").splitlines()) for f in files)
+            pack = _load_report_pack(sub)
             batches.append({
                 "id": sub.name,
                 "name": sub.name.replace("_", " ").title(),
                 "files": len(files),
                 "languages": ["python" if l == "py" else l for l in langs],
                 "lines": lines,
+                "report_pack": bool(pack),
+                "report_name": (pack or {}).get("report", {}).get("name") if pack else None,
+                "cde_count": len((pack or {}).get("cdes", [])) if pack else 0,
             })
     return JSONResponse({"batches": batches})
+
+
+@app.get("/api/reports")
+def list_reports() -> JSONResponse:
+    """Catalogue of business reports that ship with a wired report pack.
+
+    Powers the Reports landing screen: each entry carries the report metadata
+    plus a lightweight code summary of the batch that produces it.
+    """
+    reports = []
+    if BATCHES_DIR.exists():
+        for sub in sorted(p for p in BATCHES_DIR.iterdir() if p.is_dir()):
+            pack = _load_report_pack(sub)
+            if not pack:
+                continue
+            files = [f for f in sorted(sub.rglob("*")) if f.suffix.lower() in _CODE_EXT]
+            if not files:
+                continue
+            langs = sorted({f.suffix.lower().lstrip(".") for f in files})
+            lines = sum(len(f.read_text(encoding="utf-8").splitlines()) for f in files)
+            meta = pack.get("report", {})
+            cdes = pack.get("cdes", [])
+            hero = next((c for c in cdes if c.get("hero")), cdes[0] if cdes else None)
+            reports.append({
+                "batch": sub.name,
+                "id": meta.get("id") or sub.name,
+                "name": meta.get("name") or sub.name.replace("_", " ").title(),
+                "framework": meta.get("framework"),
+                "domain": meta.get("domain"),
+                "report_type": meta.get("report_type"),
+                "owner": meta.get("owner"),
+                "frequency": meta.get("frequency"),
+                "version": meta.get("version"),
+                "last_updated": meta.get("last_updated"),
+                "unit": meta.get("unit"),
+                "description": meta.get("description"),
+                "cde_count": len(cdes),
+                "hero_cde": (hero or {}).get("business_name"),
+                "files": len(files),
+                "languages": ["python" if l == "py" else l for l in langs],
+                "lines": lines,
+            })
+    return JSONResponse({"reports": reports})
 
 
 @app.post("/api/parse")
@@ -143,10 +206,11 @@ def logout(request: Request) -> JSONResponse:
 @app.get("/api/auth/me")
 def me(request: Request) -> JSONResponse:
     uid = _current_user_id(request)
+    agent_on = agent.agent_available()
     if uid is None:
-        return JSONResponse({"user": None})
+        return JSONResponse({"user": None, "agent": agent_on})
     user = db.get_user(uid)
-    return JSONResponse({"user": user, "agent": agent.agent_available()})
+    return JSONResponse({"user": user, "agent": agent_on})
 
 
 # ---------------------------------------------------------------------------

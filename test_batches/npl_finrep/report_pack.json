@@ -1,0 +1,91 @@
+{
+  "report": {
+    "id": "finrep_f1800_npl",
+    "name": "FINREP F18.00 — Non-performing Exposures",
+    "framework": "IFRS 9 · FINREP",
+    "domain": "Credit Risk",
+    "report_type": "Regulatory",
+    "owner": "Regulatory Reporting · Credit Risk",
+    "frequency": "Quarterly",
+    "version": "v2.3",
+    "last_updated": "2026-10-10",
+    "unit": "EUR thousands",
+    "description": "Quarterly non-performing exposure (NPE) disclosure. Exposures are staged in SQL, classified as performing / non-performing in a Python engine under the EBA definition, then aggregated to segment level and published to the F18.00 template.",
+    "output_dataset": "finrep_f1800_npl"
+  },
+  "table": {
+    "caption": "F18.00 — Non-performing exposures by segment (reporting period 2026-Q3)",
+    "columns": [
+      { "key": "report_row", "label": "Portfolio segment" },
+      { "key": "gross_carrying_amount_eur", "label": "Gross carrying amount", "num": true },
+      { "key": "npl_exposure_eur", "label": "Non-performing exposures", "cde": "non_performing_exposures", "num": true },
+      { "key": "npl_ratio_pct", "label": "NPL ratio %", "cde": "npl_ratio", "num": true },
+      { "key": "npl_coverage_ratio_pct", "label": "NPL coverage %", "cde": "npl_coverage_ratio", "num": true }
+    ],
+    "rows": [
+      { "report_row": "Retail mortgages", "gross_carrying_amount_eur": 4812400, "npl_exposure_eur": 139560, "npl_ratio_pct": 2.9, "npl_coverage_ratio_pct": 33.1 },
+      { "report_row": "Consumer finance", "gross_carrying_amount_eur": 1337900, "npl_exposure_eur": 93650, "npl_ratio_pct": 7.0, "npl_coverage_ratio_pct": 62.9 },
+      { "report_row": "SME lending", "gross_carrying_amount_eur": 2044650, "npl_exposure_eur": 112450, "npl_ratio_pct": 5.5, "npl_coverage_ratio_pct": 55.0 },
+      { "report_row": "Corporate", "gross_carrying_amount_eur": 3918120, "npl_exposure_eur": 78360, "npl_ratio_pct": 2.0, "npl_coverage_ratio_pct": 50.1 }
+    ]
+  },
+  "cdes": [
+    {
+      "id": "non_performing_exposures",
+      "business_name": "Non-performing exposures",
+      "cde_code": "CDE-CR-0333",
+      "report_location": "F18.00 · Row 0010 · Col 010",
+      "data_type": "Decimal(18,2) · EUR",
+      "aggregation_level": "Portfolio segment (SUM of flagged exposure)",
+      "appears_in": ["FINREP F18.00 — Non-performing Exposures", "Board Risk Pack — Credit", "NPL Strategy Pack"],
+      "definition": "Gross carrying amount of exposures classified as non-performing under the EBA definition (90+ days past due, or forborne unlikely-to-pay).",
+      "dataset": "finrep_f1800_npl",
+      "column": "npl_exposure_eur",
+      "table_column": "npl_exposure_eur",
+      "type": "cross-language",
+      "hero": true,
+      "candidates": [
+        { "dataset": "finrep_f1800_npl", "column": "npl_exposure_eur", "job": "JOB_RPT_F1800", "last_updated": "2026-10-10", "confidence": 0.9, "recommended": true, "why": "Final regulatory output; column and report mapping match the F18.00 cell." },
+        { "dataset": "npl_by_segment", "column": "npl_exposure_eur", "job": "JOB_MART_NPL", "last_updated": "2026-10-10", "confidence": 0.62, "why": "Segment aggregation one hop upstream; same column name, pre-publication grain." },
+        { "dataset": "npl_flagged", "column": "npl_exposure_eur", "job": "JOB_PY_NPL", "last_updated": "2026-10-10", "confidence": 0.44, "why": "Account-level flagged exposure produced in Python; the NPE rule is opaque to the static parser." }
+      ],
+      "expected_story": "npl_exposure_eur = SUM(exposure × is_npl). The is_npl flag is computed in a Python engine (90+ dpd OR forborne), so the field trace stops at the Python boundary until the AI layer recovers the classification rule."
+    },
+    {
+      "id": "npl_coverage_ratio",
+      "business_name": "NPL coverage ratio",
+      "cde_code": "CDE-CR-0334",
+      "report_location": "F18.00 · Row 0010 · Col 040",
+      "data_type": "Decimal(9,4) · ratio",
+      "aggregation_level": "Portfolio segment (provisions ÷ NPE)",
+      "appears_in": ["FINREP F18.00 — Non-performing Exposures", "NPL Strategy Pack"],
+      "definition": "Accumulated provisions held against the non-performing book divided by non-performing exposures.",
+      "dataset": "npl_by_segment",
+      "column": "npl_coverage_ratio",
+      "table_column": "npl_coverage_ratio_pct",
+      "type": "calculation",
+      "candidates": [
+        { "dataset": "npl_by_segment", "column": "npl_coverage_ratio", "job": "JOB_MART_NPL", "last_updated": "2026-10-10", "confidence": 0.9, "recommended": true, "why": "Ratio computed in the segment mart; report multiplies by 100." }
+      ],
+      "expected_story": "npl_coverage_ratio = SUM(provision) / SUM(npl_exposure). A ratio of two aggregated figures."
+    },
+    {
+      "id": "npl_ratio",
+      "business_name": "NPL ratio",
+      "cde_code": "CDE-CR-0335",
+      "report_location": "F18.00 · Row 0010 · Col 030",
+      "data_type": "Decimal(9,4) · ratio",
+      "aggregation_level": "Portfolio segment (NPE ÷ gross exposure)",
+      "appears_in": ["FINREP F18.00 — Non-performing Exposures", "Board Risk Pack — Credit"],
+      "definition": "Non-performing exposures as a percentage of total gross carrying amount for the segment.",
+      "dataset": "finrep_f1800_npl",
+      "column": "npl_ratio_pct",
+      "table_column": "npl_ratio_pct",
+      "type": "calculation",
+      "candidates": [
+        { "dataset": "finrep_f1800_npl", "column": "npl_ratio_pct", "job": "JOB_RPT_F1800", "last_updated": "2026-10-10", "confidence": 0.88, "recommended": true, "why": "Computed in the report layer from NPE and gross exposure; inherits the Python boundary on the NPE input." }
+      ],
+      "expected_story": "npl_ratio_pct = npl_exposure / gross_carrying_amount × 100. The NPE numerator inherits the Python boundary from the classification step."
+    }
+  ]
+}

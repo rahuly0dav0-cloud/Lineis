@@ -1,0 +1,129 @@
+{
+  "report": {
+    "id": "finrep_f1804_impairment",
+    "name": "FINREP F18.04 — Impairment & Credit Risk",
+    "framework": "IFRS 9 · FINREP",
+    "domain": "Credit Risk",
+    "report_type": "Regulatory",
+    "owner": "Regulatory Reporting · Credit Risk",
+    "frequency": "Quarterly",
+    "version": "v4.2",
+    "last_updated": "2026-10-11",
+    "unit": "EUR thousands",
+    "description": "Quarterly impairment and exposure disclosure for the loan portfolio. Figures are built from the core-banking loan book through an IFRS 9 expected-credit-loss engine and aggregated by segment.",
+    "output_dataset": "finrep_f1804_impairment"
+  },
+  "table": {
+    "caption": "F18.04 — Accumulated impairment by portfolio segment (reporting period 2026-Q3)",
+    "columns": [
+      { "key": "report_row", "label": "Portfolio segment" },
+      { "key": "gross_carrying_amount_eur", "label": "Gross carrying amount", "cde": "exposure_at_default", "num": true },
+      { "key": "stage2_impairment_eur", "label": "Stage 2 allowance", "num": true },
+      { "key": "stage3_impairment_eur", "label": "Stage 3 allowance", "num": true },
+      { "key": "accumulated_impairment_eur", "label": "Accumulated impairment", "cde": "accumulated_impairment", "num": true },
+      { "key": "coverage_ratio_pct", "label": "Coverage ratio %", "cde": "coverage_ratio", "num": true }
+    ],
+    "rows": [
+      { "report_row": "Retail mortgages", "gross_carrying_amount_eur": 4812400, "stage2_impairment_eur": 18220, "stage3_impairment_eur": 46110, "accumulated_impairment_eur": 64330, "coverage_ratio_pct": 1.34 },
+      { "report_row": "Consumer finance", "gross_carrying_amount_eur": 1337900, "stage2_impairment_eur": 21440, "stage3_impairment_eur": 58970, "accumulated_impairment_eur": 80410, "coverage_ratio_pct": 6.01 },
+      { "report_row": "SME lending", "gross_carrying_amount_eur": 2044650, "stage2_impairment_eur": 27310, "stage3_impairment_eur": 61880, "accumulated_impairment_eur": 89190, "coverage_ratio_pct": 4.36 },
+      { "report_row": "Corporate", "gross_carrying_amount_eur": 3918120, "stage2_impairment_eur": 15090, "stage3_impairment_eur": 39240, "accumulated_impairment_eur": 54330, "coverage_ratio_pct": 1.39 }
+    ]
+  },
+  "cdes": [
+    {
+      "id": "accumulated_impairment",
+      "business_name": "Accumulated impairment",
+      "cde_code": "CDE-CR-0471",
+      "report_location": "F18.04 · Row 0010 · Col 010",
+      "data_type": "Decimal(18,2) · EUR",
+      "aggregation_level": "Portfolio segment (SUM of account-level lifetime ECL)",
+      "appears_in": ["FINREP F18.04 — Impairment & Credit Risk", "Board Risk Pack — Credit", "ICAAP — Expected Loss"],
+      "definition": "Total loan-loss allowance recognised under IFRS 9 across all stages, aggregated over the portfolio.",
+      "dataset": "finrep_f1804_impairment",
+      "column": "accumulated_impairment_eur",
+      "table_column": "accumulated_impairment_eur",
+      "type": "aggregation",
+      "hero": true,
+      "candidates": [
+        { "dataset": "finrep_f1804_impairment", "column": "accumulated_impairment_eur", "job": "JOB_RPT_F1804", "last_updated": "2026-10-11", "confidence": 0.93, "recommended": true, "why": "Final regulatory output dataset; column name and report mapping match the F18.04 cell." },
+        { "dataset": "impairment_by_segment", "column": "accumulated_impairment_eur", "job": "JOB_MART_IMPAIR", "last_updated": "2026-10-11", "confidence": 0.61, "why": "Aggregation mart one hop upstream — same column name but not the published report layer." },
+        { "dataset": "ecl_by_account", "column": "lifetime_ecl_eur", "job": "JOB_ECL_ENGINE", "last_updated": "2026-10-10", "confidence": 0.38, "why": "Account-level ECL before segment aggregation; different grain and column name." }
+      ],
+      "expected_story": "Reported allowance = SUM of account lifetime ECL by segment. Each account's lifetime ECL is scenario-weighted EAD × PD × LGD × discount, computed in SAS. The field-level trace crosses SQL → SAS → SQL."
+    },
+    {
+      "id": "coverage_ratio",
+      "business_name": "Coverage ratio",
+      "cde_code": "CDE-CR-0472",
+      "report_location": "F18.04 · Row 0010 · Col 040",
+      "data_type": "Decimal(9,4) · ratio",
+      "aggregation_level": "Portfolio segment (ratio of two sums)",
+      "appears_in": ["FINREP F18.04 — Impairment & Credit Risk", "Board Risk Pack — Credit"],
+      "definition": "Accumulated impairment divided by gross carrying amount (total exposure) for the segment.",
+      "dataset": "impairment_by_segment",
+      "column": "coverage_ratio",
+      "table_column": "coverage_ratio_pct",
+      "type": "calculation",
+      "candidates": [
+        { "dataset": "impairment_by_segment", "column": "coverage_ratio", "job": "JOB_MART_IMPAIR", "last_updated": "2026-10-11", "confidence": 0.9, "recommended": true, "why": "Ratio computed in the aggregation mart; report multiplies by 100." },
+        { "dataset": "finrep_f1804_impairment", "column": "coverage_ratio_pct", "job": "JOB_RPT_F1804", "last_updated": "2026-10-11", "confidence": 0.55, "why": "Report-layer percentage form; derived directly from the mart ratio." }
+      ],
+      "expected_story": "coverage_ratio = SUM(lifetime_ecl) / SUM(ead). A ratio of two aggregated figures."
+    },
+    {
+      "id": "exposure_at_default",
+      "business_name": "Exposure at default (EAD)",
+      "cde_code": "CDE-CR-0205",
+      "report_location": "F18.04 · Row 0010 · Col 020",
+      "data_type": "Decimal(18,2) · EUR",
+      "aggregation_level": "Account level (derived), summed to segment on the report",
+      "appears_in": ["FINREP F18.04 — Impairment & Credit Risk", "COREP C 07.00 — Credit Risk SA", "ICAAP — Expected Loss"],
+      "definition": "Expected gross exposure at the point of default: drawn balance plus the credit-converted undrawn commitment.",
+      "dataset": "loan_book",
+      "column": "ead_eur",
+      "table_column": "gross_carrying_amount_eur",
+      "type": "calculation",
+      "candidates": [
+        { "dataset": "loan_book", "column": "ead_eur", "job": "JOB_STG_LOANBOOK", "last_updated": "2026-10-10", "confidence": 0.95, "recommended": true, "why": "EAD is derived here from balance and undrawn commitment; fully traceable in SQL." }
+      ],
+      "expected_story": "ead_eur = current_balance + undrawn_commitment × credit_conversion_factor. A fully-traceable SQL calculation from raw fields."
+    },
+    {
+      "id": "probability_of_default",
+      "business_name": "Probability of default (PD)",
+      "cde_code": "CDE-CR-0118",
+      "report_location": "F18.04 · Row 0010 · Col 030",
+      "data_type": "Decimal(9,6) · ratio",
+      "aggregation_level": "Account level (direct)",
+      "appears_in": ["FINREP F18.04 — Impairment & Credit Risk", "Model Monitoring Pack — PD"],
+      "definition": "Twelve-month probability of default taken from the rating model and carried through the loan book.",
+      "dataset": "loan_book",
+      "column": "pd",
+      "table_column": null,
+      "type": "direct",
+      "candidates": [
+        { "dataset": "loan_book", "column": "pd", "job": "JOB_STG_LOANBOOK", "last_updated": "2026-10-10", "confidence": 0.97, "recommended": true, "why": "Direct rename of the rating-model PD; one-to-one source mapping." }
+      ],
+      "expected_story": "pd is a direct rename of raw.loan_accounts.pd_12m — a one-to-one source mapping."
+    },
+    {
+      "id": "average_pd_backtest",
+      "business_name": "Average PD (model monitoring)",
+      "cde_code": "CDE-CR-0119",
+      "report_location": "Model Monitoring Pack · PD back-test",
+      "data_type": "Decimal(9,6) · ratio",
+      "aggregation_level": "Portfolio segment (Python groupby mean)",
+      "appears_in": ["Model Monitoring Pack — PD"],
+      "definition": "Mean probability of default per segment, used to back-test the rating model.",
+      "dataset": "pd_backtest",
+      "column": "avg_pd",
+      "table_column": null,
+      "type": "cross-language",
+      "candidates": [
+        { "dataset": "pd_backtest", "column": "avg_pd", "job": "JOB_PD_BACKTEST", "last_updated": "2026-10-09", "confidence": 0.5, "recommended": true, "why": "Produced by a Python groupby; the field-level trace is opaque until the AI layer reads the aggregation." }
+      ],
+      "expected_story": "avg_pd = mean(pd) grouped by segment, computed in Python. The field-level trace stops at the Python boundary until the AI layer reads the groupby."
+    }
+  ]
+}

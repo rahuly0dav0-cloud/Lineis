@@ -6,14 +6,49 @@
   <title>Lineis — Data Lineage Intelligence</title>
   <link rel="stylesheet" href="/static/vendor/inter.css" />
   <link rel="stylesheet" href="/static/style.css" />
+  <link rel="stylesheet" href="/static/platform.css" />
   <script src="/static/vendor/cytoscape.min.js"></script>
   <script src="/static/vendor/dagre.min.js"></script>
   <script src="/static/vendor/cytoscape-dagre.min.js"></script>
 </head>
 <body>
 
+  <!-- ================= BANKING DATA LINEAGE PLATFORM (primary) ============ -->
+  <section id="platform" class="platform">
+    <aside class="pf-side">
+      <div class="pf-side-brand" id="pfBrand" title="Reports home">
+        <span class="logo">L</span>
+        <div><strong>Lineis</strong><span>Data Lineage Platform</span></div>
+      </div>
+      <nav id="pfSideNav">
+        <div class="pf-side-group">Workspace</div>
+        <button class="pf-side-item active" data-nav="reports"><span class="ico">▣</span><span>Reports</span></button>
+        <button class="pf-side-item" data-nav="explorer"><span class="ico">⎔</span><span>Lineage Explorer</span></button>
+        <button class="pf-side-item static"><span class="ico">▤</span><span>Data Catalog</span></button>
+        <button class="pf-side-item static"><span class="ico">◷</span><span>Jobs &amp; Schedules</span></button>
+        <div class="pf-side-group">Analysis</div>
+        <button class="pf-side-item static"><span class="ico">⊕</span><span>Impact Analysis</span></button>
+        <button class="pf-side-item static"><span class="ico">⚙</span><span>Settings</span></button>
+      </nav>
+      <div class="pf-side-foot">
+        <div class="pf-side-acct" id="pfAcct"></div>
+      </div>
+    </aside>
+
+    <div class="pf-body">
+      <header class="pf-top">
+        <div class="pf-top-title" id="pfTopTitle">Report Catalog<span>Prove where every reported number comes from</span></div>
+        <div class="pf-top-spacer"></div>
+        <div class="pf-search"><span>⌕</span><input id="pfSearch" type="text" placeholder="Search reports, fields, CDEs…" autocomplete="off" /></div>
+        <button class="pf-icon-btn" id="pfTheme" title="Toggle light / dark">☾</button>
+      </header>
+      <div class="pf-stepbar" id="pfStepbar" hidden></div>
+      <main class="pf-main" id="pfMain"></main>
+    </div>
+  </section>
+
   <!-- ====================== HOME / LANDING ====================== -->
-  <section id="home" class="screen home">
+  <section id="home" class="screen home" hidden>
     <nav class="home-nav">
       <div class="brand" id="brandHome" role="button" tabindex="0" title="New analysis">
         <span class="logo">L</span>
@@ -102,7 +137,10 @@
       </div>
 
       <nav class="rail-nav">
-        <div class="rail-group">Lineage</div>
+        <div class="rail-group">Report</div>
+        <button class="rail-item" data-view="report" title="Start here: pick a report figure and trace it to its true source in plain language"><span class="si-ico">★</span><span>Report fields</span><span id="cdeBadge" class="badge soft" hidden>0</span></button>
+
+        <div class="rail-group">Lineage detail</div>
         <button class="rail-item active" data-view="summary" title="Overview: dataset counts, languages and lineage confidence"><span class="si-ico">▤</span><span>Summary</span></button>
         <button class="rail-item" data-view="datasets" title="Every dataset grouped by Source, Intermediate and Output — click one to inspect it"><span class="si-ico">▦</span><span>Datasets</span></button>
         <button class="rail-item" data-view="operations" title="Every transformation with its file, line and code evidence"><span class="si-ico">⇄</span><span>Operations</span></button>
@@ -184,6 +222,13 @@
           <div id="historyListWs" class="history-list"></div>
         </section>
 
+        <!-- Report Explorer: the business-first, guided surface. Pick a report
+             figure (CDE), read its lineage in plain language, and spot / resolve
+             gaps. Replaces graph + panel when the Report view is selected. -->
+        <section class="ws-report" id="wsReport" hidden>
+          <div id="reportBody"></div>
+        </section>
+
         <!-- Dedicated field-level lineage flow — opened when a column is traced.
              Covers the whole main area with a chart of just the columns that feed
              (and are fed by) the selected field, so the flow is readable. -->
@@ -253,5 +298,6 @@
   </div>
 
   <script src="/static/app.js"></script>
+  <script src="/static/flow.js"></script>
 </body>
 </html>

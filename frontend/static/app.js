@@ -11,6 +11,7 @@ let currentUser = null;
 let agentEnabled = false;
 let authMode = "login";
 let lastProposals = [];
+let lastReportPack = null;   // CDE catalogue shipped with the current batch
 const activeLangs = new Set(["sql", "sas", "python"]);
 
 const LANG_COLOR = { sql: "#5a93ff", sas: "#f6ad3c", python: "#2fd196", "": "#8e9aab" };
@@ -38,7 +39,7 @@ function wrapLabel(label) {
   for (const i of seps) if (Math.abs(i - mid) < Math.abs(best - mid)) best = i;
   return s.slice(0, best + 1) + "\n" + s.slice(best + 1);
 }
-const LINEAGE_VIEWS = { summary: "Summary", datasets: "Datasets", operations: "Operations", details: "Inspect", review: "Review" };
+const LINEAGE_VIEWS = { report: "Report fields", summary: "Summary", datasets: "Datasets", operations: "Operations", details: "Inspect", review: "Review" };
 const $ = (id) => document.getElementById(id);
 
 // ---------------------------------------------------------------------------
@@ -50,6 +51,8 @@ function showHome() {
   closeColGraph();
   if (cy) { cy.destroy(); cy = null; }
   lastResult = null;
+  lastReportPack = null;
+  currentCde = null;
 }
 
 // ---------------------------------------------------------------------------
@@ -96,11 +99,12 @@ async function loadBatchCards() {
     grid.innerHTML = "";
     batches.forEach((b) => {
       const card = document.createElement("div");
-      card.className = "batch-card";
+      card.className = "batch-card" + (b.report_pack ? " guided" : "");
       card.onclick = () => loadBatch(b.id);
       card.innerHTML = `
+        ${b.report_pack ? `<span class="bc-guided">★ Guided report demo</span>` : ""}
         <h4>${b.name}</h4>
-        <div class="meta"><span>${b.files} files</span><span>${b.lines.toLocaleString()} lines</span></div>
+        <div class="meta"><span>${b.files} files</span><span>${b.lines.toLocaleString()} lines</span>${b.report_pack && b.cde_count ? `<span>${b.cde_count} report fields</span>` : ""}</div>
         <div class="langs">${b.languages.map((l) => `<span class="lg ${l}">${l}</span>`).join("")}</div>`;
       grid.appendChild(card);
     });
@@ -180,7 +184,9 @@ function render(data) {
   renderDatasets(data);
   renderOperations(data);
   renderReview(data);
-  switchView("summary");
+  lastReportPack = data.report_pack || null;
+  setupReportView();
+  switchView(lastReportPack ? "report" : "summary");
   showGraphHint();
   if (agentEnabled) runAgentReview();
 }
@@ -886,20 +892,25 @@ function gotoView(view, group) {
 function switchView(name) {
   document.querySelectorAll(".rail-item").forEach((t) => t.classList.toggle("active", t.dataset.view === name));
   const isHistory = name === "history";
+  const isReport = name === "report";
+  const fullWidth = isHistory || isReport;
   const panel = document.querySelector(".ws-panel");
   const graph = $("graph");
   const hist = $("wsHistory");
+  const report = $("wsReport");
   const legend = $("wsLegend");
-  if (panel) panel.hidden = isHistory;
-  if (graph) graph.hidden = isHistory;
+  if (panel) panel.hidden = fullWidth;
+  if (graph) graph.hidden = fullWidth;
   if (hist) hist.hidden = !isHistory;
-  if (legend) legend.hidden = isHistory;
+  if (report) report.hidden = !isReport;
+  if (legend) legend.hidden = fullWidth;
 
   if (isHistory) {
     if (currentUser) loadHistory();
     else renderHistoryCTA();
     return;
   }
+  if (isReport) { renderReportLanding(); return; }
 
   document.querySelectorAll(".tabpane").forEach((p) => p.classList.toggle("active", p.dataset.pane === name));
   const title = $("panelTitle");
@@ -1309,6 +1320,287 @@ function undoProposal(idx) {
       actions.querySelectorAll("[data-reject]").forEach((b) => b.onclick = () => rejectProposal(+b.dataset.reject));
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Report Explorer — the business-first, guided surface.
+// Pick a report figure (CDE) → read its lineage in plain language → spot and
+// resolve gaps with AI. Built for reviewers who read numbers, not graphs.
+// ---------------------------------------------------------------------------
+let currentCde = null;
+
+const CDE_TYPE = {
+  direct:           { label: "Direct mapping", ico: "→", color: "var(--sink)" },
+  calculation:      { label: "Calculation", ico: "∑", color: "var(--sql)" },
+  aggregation:      { label: "Aggregation", ico: "Σ", color: "var(--mid)" },
+  "cross-language": { label: "Cross-language", ico: "⇄", color: "var(--sas)" },
+};
+const LANG_LABEL = { sql: "SQL", sas: "SAS", python: "Python", ai: "AI" };
+
+// Toggle the Report rail entry + badge to match the loaded analysis.
+function setupReportView() {
+  currentCde = null;
+  const badge = $("cdeBadge");
+  const item = document.querySelector('.rail-item[data-view="report"]');
+  const group = item ? item.previousElementSibling : null;
+  const n = (lastReportPack && (lastReportPack.cdes || []).length) || 0;
+  if (badge) { badge.hidden = !n; badge.textContent = n; }
+  if (item) item.style.display = lastReportPack ? "" : "none";
+  if (group && group.classList.contains("rail-group")) group.style.display = lastReportPack ? "" : "none";
+}
+
+// Cheap probe: does a report field's trace hit an opaque (non-resolvable) hop?
+function cdeHasGap(c) {
+  try { return traceColUp(c.dataset, c.column).some((r) => r.kind === "opaque"); }
+  catch (e) { return false; }
+}
+
+function renderReportLanding() {
+  const host = $("reportBody");
+  if (!host) return;
+  currentCde = null;
+  if (!lastReportPack) {
+    host.innerHTML = `<div class="rpt-empty">
+      <div class="rpt-empty-ico">★</div>
+      <h2>No report pack for this analysis</h2>
+      <p>This guided view appears when the analysed batch ships a <b>report pack</b> — the report-field definitions that map each regulatory figure to its dataset and column. Open the <b>Credit Impairment Ifrs9</b> demo to see it in action, or use <b>Summary / Datasets / Inspect</b> for the raw lineage.</p>
+    </div>`;
+    return;
+  }
+  const r = lastReportPack.report || {};
+  const cdes = lastReportPack.cdes || [];
+  const steps = [
+    ["1", "Pick a report figure", "Choose the number you need to explain — by its business name and where it lands in the return."],
+    ["2", "See its starting point", "We resolve which output dataset and column populate that figure."],
+    ["3", "Trace upstream", "Follow the figure back through every SQL / SAS / Python step that shaped it, with the code as evidence."],
+    ["4", "Reach the source — or a gap", "The trace ends at a raw field, or stops honestly where the code is opaque."],
+    ["5", "Resolve gaps with AI", "Where static parsing can't see inside the code, the AI layer reads it and proposes the missing link for you to confirm."],
+  ];
+  host.innerHTML = `
+    <div class="rpt-head">
+      <div class="rpt-kicker">${esc(r.framework || "Report")}</div>
+      <h1>${esc(r.name || "Report fields")}</h1>
+      <p class="rpt-lede">${esc(r.description || "")}</p>
+      ${r.owner ? `<div class="rpt-owner">Owner · ${esc(r.owner)}</div>` : ""}
+    </div>
+    <div class="rpt-steps">
+      ${steps.map(([n, t, d]) => `<div class="rpt-step"><span class="rpt-step-n">${n}</span><div><b>${esc(t)}</b><span>${esc(d)}</span></div></div>`).join("")}
+    </div>
+    <div class="rpt-cde-head">
+      <h2>Critical data elements</h2>
+      <span class="muted">${cdes.length} figure${cdes.length === 1 ? "" : "s"} · click one to trace it to source</span>
+    </div>
+    <div class="rpt-cde-grid">${cdes.map(cdeCard).join("")}</div>`;
+  host.querySelectorAll(".rpt-cde[data-cde]").forEach((el) =>
+    el.onclick = () => openCde(el.dataset.cde));
+}
+
+function cdeCard(c) {
+  const t = CDE_TYPE[c.type] || { label: c.type || "Lineage", ico: "•", color: "var(--muted)" };
+  const gap = cdeHasGap(c);
+  return `<button class="rpt-cde" data-cde="${esc(c.id)}">
+    <div class="rpt-cde-top">
+      <span class="rpt-type" style="--tc:${t.color}">${t.ico} ${esc(t.label)}</span>
+      ${c.hero ? `<span class="rpt-hero-tag">Hero example</span>` : ""}
+      ${gap ? `<span class="rpt-gap-tag">⚠ Missing link</span>` : `<span class="rpt-ok-tag">✓ Fully traced</span>`}
+    </div>
+    <h3>${esc(c.business_name)}</h3>
+    <p class="rpt-cde-def">${esc(c.definition || "")}</p>
+    <div class="rpt-cde-foot">
+      <span class="rpt-loc">${esc(c.report_location || "")}</span>
+      <span class="rpt-tech mono">${esc(c.dataset)}.${esc(c.column)}</span>
+    </div>
+  </button>`;
+}
+
+// Which operation produced a given target column (for formula / evidence)?
+function colOpFor(dsId, col) {
+  const lc = (col || "").toLowerCase();
+  for (const o of (lastResult.operations || [])) {
+    if (o.target !== dsId) continue;
+    for (const ce of (o.column_map || []))
+      if ((ce.target_column || "").toLowerCase() === lc) return o;
+  }
+  const prods = producerOps(dsId);
+  return prods.length ? prods[0] : null;
+}
+
+function trimSnippet(s, max = 320) {
+  s = String(s || "").trim();
+  return s.length > max ? s.slice(0, max) + " …" : s;
+}
+
+function evidenceBlock(op, label) {
+  if (!op) return "";
+  const lang = LANG_LABEL[op.language] || op.language || "";
+  const conf = op.confidence || "medium";
+  const loc = op.file
+    ? `${op.file}${op.line_start ? ":" + op.line_start + (op.line_end && op.line_end !== op.line_start ? "–" + op.line_end : "") : ""}`
+    : "";
+  return `<div class="evidence">
+    <div class="evidence-top">
+      <span class="ev-label">${esc(label)}</span>
+      <span class="lg ${esc(op.language || "")}">${esc(lang)}</span>
+      <span class="ev-conf ${esc(conf)}">${esc(conf)} confidence</span>
+      ${loc ? `<span class="ev-loc mono">${esc(loc)}</span>` : ""}
+    </div>
+    ${op.snippet ? `<pre class="ev-code">${esc(trimSnippet(op.snippet))}</pre>` : ""}
+  </div>`;
+}
+
+function openCde(id) {
+  if (!lastReportPack) return;
+  const c = (lastReportPack.cdes || []).find((x) => x.id === id);
+  if (!c) return;
+  currentCde = c;
+  const host = $("reportBody");
+  const up = traceColUp(c.dataset, c.column);
+  const gapRow = up.find((r) => r.kind === "opaque");
+  host.innerHTML = cdeStory(c, up, gapRow);
+  wireCdeStory(c);
+  host.scrollTop = 0;
+}
+
+function cdeStory(c, up, gapRow) {
+  const t = CDE_TYPE[c.type] || { label: c.type, ico: "•", color: "var(--muted)" };
+  const hops = up.map((r, i) => storyHop(r, i)).join(`<div class="hop-link">↓</div>`);
+  const status = gapRow
+    ? `<div class="story-status gap"><span class="ss-ico">⚠</span><div><b>This figure has a missing link</b><p>The trace is complete down to <span class="mono">${esc(dsLabel(gapRow.dsId))}.${esc(gapRow.col)}</span>, then stops where <b>${esc(opaqueLang(gapRow.dsId))}</b> code shapes the value and doesn't expose field-level lineage. Use <b>✨ Resolve with AI</b> at that step to read inside the code.</p></div></div>`
+    : `<div class="story-status ok"><span class="ss-ico">✓</span><div><b>Lineage is complete</b><p>Every hop resolves to code evidence, all the way back to a raw source field.</p></div></div>`;
+  return `
+    <button class="rpt-back" id="cdeBack">← All report fields</button>
+    <div class="story-head">
+      <div class="story-head-main">
+        <span class="rpt-type" style="--tc:${t.color}">${t.ico} ${esc(t.label)}</span>
+        <h1>${esc(c.business_name)}</h1>
+        <p class="rpt-lede">${esc(c.definition || "")}</p>
+      </div>
+      <dl class="story-meta">
+        <div><dt>Report location</dt><dd>${esc(c.report_location || "—")}</dd></div>
+        <div><dt>Output field</dt><dd class="mono">${esc(c.dataset)}.${esc(c.column)}</dd></div>
+      </dl>
+    </div>
+    ${status}
+    <div class="story-steps-label">
+      <span class="sec-title" style="margin:0">Lineage trace · figure → source</span>
+      <button class="btn ghost sm" id="cdeOpenGraph">Open in lineage graph ↗</button>
+    </div>
+    <div class="story-chain">${hops}</div>`;
+}
+
+function storyHop(r, i) {
+  const isFocus = i === 0;
+  const op = colOpFor(r.dsId, r.col);
+  const parents = colParents(r.dsId, r.col);
+  let body = "";
+  if (r.kind === "origin") {
+    body = `<div class="hop-origin">✓ Raw source field — the lineage starts here. This value is captured directly, not derived from any upstream column.</div>`;
+  } else if (r.kind === "opaque") {
+    body = `<div class="hop-gap">
+      <div class="hop-gap-head"><span class="hg-tag">⚠ Missing link</span> the upstream value is built by <b>${esc(opaqueLang(r.dsId))}</b> code that doesn't expose field-level lineage to the static parser.</div>
+      ${evidenceBlock(op, "What the parser can see — but can't resolve")}
+      <button class="btn ai-resolve" data-ai-ds="${esc(r.dsId)}" data-ai-col="${esc(r.col)}">✨ Resolve with AI</button>
+      <div class="ai-resolve-out" data-ai-out="${esc(r.dsId)}::${esc(r.col)}"></div>
+    </div>`;
+  } else {
+    const chips = parents.map((p) => `<button class="hop-src mono" data-ds="${esc(p.dsId)}" data-col="${esc(p.col)}">${esc(dsLabel(p.dsId))}.${esc(p.col)}</button>`).join(" ");
+    body = `<div class="hop-derive">
+      <div class="hop-from">Built from ${chips || "—"}</div>
+      ${evidenceBlock(op, "Transformation")}
+    </div>`;
+  }
+  const roleTag = isFocus ? `<span class="hop-badge focus">Report figure</span>`
+    : r.kind === "origin" ? `<span class="hop-badge origin">Source</span>`
+    : r.kind === "opaque" ? `<span class="hop-badge gap">Gap</span>` : "";
+  return `<div class="hop" style="--d:${r.depth}">
+    <div class="hop-head">
+      <span class="hop-n">${i + 1}</span>
+      <button class="hop-title mono" data-ds="${esc(r.dsId)}" data-col="${esc(r.col)}">${esc(dsLabel(r.dsId))}.${esc(r.col)}</button>
+      ${roleTag}
+    </div>
+    ${body}
+  </div>`;
+}
+
+function wireCdeStory(c) {
+  const host = $("reportBody");
+  $("cdeBack") && ($("cdeBack").onclick = () => renderReportLanding());
+  $("cdeOpenGraph") && ($("cdeOpenGraph").onclick = () => selectColumn(c.dataset, c.column));
+  host.querySelectorAll(".hop-title[data-ds], .hop-src[data-ds]").forEach((el) =>
+    el.onclick = () => selectColumn(el.dataset.ds, el.dataset.col));
+  host.querySelectorAll(".ai-resolve[data-ai-ds]").forEach((b) =>
+    b.onclick = () => aiResolveBoundary(b.dataset.aiDs, b.dataset.aiCol, b));
+}
+
+function aiOutFor(dsId, col) {
+  return [...$("reportBody").querySelectorAll(".ai-resolve-out")]
+    .find((e) => e.dataset.aiOut === dsId + "::" + col);
+}
+
+async function aiResolveBoundary(dsId, col, btn) {
+  const out = aiOutFor(dsId, col);
+  if (!out) return;
+  if (!agentEnabled) {
+    out.innerHTML = `<div class="ai-warn">⚠ The AI layer needs <code>GROQ_API_KEY</code> set on the server. It is configured on the hosted demo.</div>`;
+    return;
+  }
+  btn.disabled = true;
+  out.innerHTML = `<div class="ai-loading"><span class="spinner sm"></span> AI is reading the ${esc(opaqueLang(dsId))} code to recover the missing link…</div>`;
+  try {
+    let proposals = lastProposals;
+    if (!proposals || !proposals.length) {
+      const res = await fetch("/api/agent/review", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ result: lastResult }),
+      });
+      const data = await res.json();
+      if (data.error) { out.innerHTML = `<div class="ai-warn">⚠ ${esc(data.error)}</div>`; btn.disabled = false; return; }
+      proposals = data.proposals || [];
+      lastProposals = proposals;
+    }
+    const opIds = new Set(producerOps(dsId).map((o) => o.id));
+    const idx = proposals.findIndex((p) => opIds.has(p.op_id));
+    if (idx < 0) {
+      out.innerHTML = `<div class="ai-warn">The AI layer reviewed the code but did not return a confident proposal for this exact boundary. See the full <b>Review</b> view for all AI suggestions.</div>`;
+      btn.disabled = false; return;
+    }
+    out.innerHTML = aiProposalCard(proposals[idx], idx, dsId);
+    wireAiProposal(out, idx, dsId, col);
+  } catch (e) {
+    out.innerHTML = `<div class="ai-warn">⚠ AI review failed to run. ${esc(String(e))}</div>`;
+    btn.disabled = false;
+  }
+}
+
+function aiProposalCard(p, idx, dsId) {
+  const conf = Math.round((p.confidence ?? 0) * 100);
+  const inputs = (p.proposed_inputs || []).map(esc).join(", ") || "—";
+  const cols = (p.columns || []).map(esc).join(", ");
+  const asum = (p.assumptions || []).map((a) => `<li>${esc(a)}</li>`).join("");
+  return `<div class="ai-card" data-ai-idx="${idx}">
+    <div class="ai-card-head"><span class="ai-badge">✨ AI-recovered link</span><span class="ai-conf">${conf}% confidence</span></div>
+    <div class="ai-flow"><b>${esc(inputs)}</b> <span class="arw">→</span> <b>${esc(p.proposed_target || dsLabel(dsId))}</b></div>
+    ${cols ? `<div class="ai-cols">Fields recovered: <span class="mono">${cols}</span></div>` : ""}
+    ${p.rationale ? `<div class="ai-rat">${esc(p.rationale)}</div>` : ""}
+    ${asum ? `<div class="ai-asum"><span>Assumptions</span><ul>${asum}</ul></div>` : ""}
+    <div class="ai-card-actions">
+      <button class="btn primary sm" data-ai-accept="${idx}">✓ Confirm &amp; add to lineage</button>
+      <button class="btn ghost sm" data-ai-reject="${idx}">Dismiss</button>
+    </div>
+  </div>`;
+}
+
+function wireAiProposal(out, idx, dsId, col) {
+  const acc = out.querySelector(`[data-ai-accept="${idx}"]`);
+  const rej = out.querySelector(`[data-ai-reject="${idx}"]`);
+  if (acc) acc.onclick = () => {
+    acceptProposal(idx);
+    out.innerHTML = `<div class="ai-accepted">✓ Confirmed — the recovered link is now in the lineage graph as an AI-inferred edge.
+      <button class="btn ghost sm" id="aiViewGraph">View in graph ↗</button></div>`;
+    const v = out.querySelector("#aiViewGraph");
+    if (v) v.onclick = () => selectColumn(dsId, col);
+  };
+  if (rej) rej.onclick = () => { out.innerHTML = `<div class="muted" style="padding:6px 2px">Dismissed.</div>`; };
 }
 
 // ---------------------------------------------------------------------------

@@ -1,0 +1,88 @@
+{
+  "report": {
+    "id": "corep_c72_lcr",
+    "name": "COREP C72.00 — Liquidity Coverage Ratio",
+    "framework": "CRR · COREP",
+    "domain": "Liquidity Risk",
+    "report_type": "Regulatory",
+    "owner": "Treasury · ALM",
+    "frequency": "Monthly",
+    "version": "v3.1",
+    "last_updated": "2026-10-08",
+    "unit": "EUR thousands",
+    "description": "Monthly Liquidity Coverage Ratio: the stock of high-quality liquid assets over stressed 30-day net cash outflows. HQLA is built in SQL; the stressed outflow leg is computed in a SAS engine with a runtime stress scenario.",
+    "output_dataset": "corep_c72_lcr"
+  },
+  "table": {
+    "caption": "C72.00 — Liquidity Coverage Ratio by stress scenario (reporting month 2026-09)",
+    "columns": [
+      { "key": "scenario", "label": "Stress scenario" },
+      { "key": "total_hqla_eur", "label": "Total HQLA (after haircut)", "cde": "high_quality_liquid_assets", "num": true },
+      { "key": "net_outflows_eur", "label": "Net cash outflows (30d)", "cde": "net_cash_outflows", "num": true },
+      { "key": "lcr_ratio_pct", "label": "LCR %", "cde": "lcr", "num": true }
+    ],
+    "rows": [
+      { "scenario": "Combined stress", "total_hqla_eur": 55310, "net_outflows_eur": 38470, "lcr_ratio_pct": 143.8 },
+      { "scenario": "Idiosyncratic", "total_hqla_eur": 55310, "net_outflows_eur": 29880, "lcr_ratio_pct": 185.1 },
+      { "scenario": "Market-wide", "total_hqla_eur": 55310, "net_outflows_eur": 34510, "lcr_ratio_pct": 160.3 }
+    ]
+  },
+  "cdes": [
+    {
+      "id": "lcr",
+      "business_name": "Liquidity Coverage Ratio",
+      "cde_code": "CDE-LR-0031",
+      "report_location": "C72.00 · Row 0010 · Col 010",
+      "data_type": "Decimal(9,2) · percent",
+      "aggregation_level": "Entity level (HQLA ÷ net outflows)",
+      "appears_in": ["COREP C72.00 — Liquidity Coverage Ratio", "Board Risk Pack — Liquidity", "ILAAP — Survival Horizon"],
+      "definition": "Stock of unencumbered high-quality liquid assets divided by total net cash outflows over a 30-day stress horizon, expressed as a percentage.",
+      "dataset": "corep_c72_lcr",
+      "column": "lcr_ratio_pct",
+      "table_column": "lcr_ratio_pct",
+      "type": "aggregation",
+      "hero": true,
+      "candidates": [
+        { "dataset": "corep_c72_lcr", "column": "lcr_ratio_pct", "job": "JOB_RPT_C72", "last_updated": "2026-10-08", "confidence": 0.92, "recommended": true, "why": "Final COREP output; percentage form of the mart ratio and matches the C72.00 cell." },
+        { "dataset": "lcr_summary", "column": "lcr_ratio", "job": "JOB_MART_LCR", "last_updated": "2026-10-08", "confidence": 0.6, "why": "Mart ratio one hop upstream, before rescaling to percent." }
+      ],
+      "expected_story": "LCR = total HQLA ÷ stressed net outflows. HQLA is a fully-traceable SQL haircut calculation; the outflow leg is computed in SAS, so that branch of the field trace stops at the SAS boundary until the AI layer reads it."
+    },
+    {
+      "id": "high_quality_liquid_assets",
+      "business_name": "High-quality liquid assets (HQLA)",
+      "cde_code": "CDE-LR-0012",
+      "report_location": "C72.00 · Row 0020 · Col 010",
+      "data_type": "Decimal(18,2) · EUR",
+      "aggregation_level": "Entity level (SUM of post-haircut security values)",
+      "appears_in": ["COREP C72.00 — Liquidity Coverage Ratio", "ILAAP — Survival Horizon"],
+      "definition": "Total value of unencumbered liquid assets after supervisory haircuts, eligible for the liquidity buffer.",
+      "dataset": "lcr_summary",
+      "column": "total_hqla_eur",
+      "table_column": "total_hqla_eur",
+      "type": "calculation",
+      "candidates": [
+        { "dataset": "lcr_summary", "column": "total_hqla_eur", "job": "JOB_MART_LCR", "last_updated": "2026-10-08", "confidence": 0.94, "recommended": true, "why": "Sum of post-haircut HQLA values; fully traceable through SQL to raw security market values." }
+      ],
+      "expected_story": "total_hqla_eur = SUM(market_value × (1 − haircut)). A fully-traceable SQL calculation from raw securities."
+    },
+    {
+      "id": "net_cash_outflows",
+      "business_name": "Net cash outflows (30-day stress)",
+      "cde_code": "CDE-LR-0024",
+      "report_location": "C72.00 · Row 0030 · Col 010",
+      "data_type": "Decimal(18,2) · EUR",
+      "aggregation_level": "Entity level (SUM of stressed deposit outflows)",
+      "appears_in": ["COREP C72.00 — Liquidity Coverage Ratio"],
+      "definition": "Total expected cash outflows less capped inflows over a 30-day combined stress scenario.",
+      "dataset": "lcr_summary",
+      "column": "total_net_outflows_eur",
+      "table_column": "net_outflows_eur",
+      "type": "cross-language",
+      "candidates": [
+        { "dataset": "lcr_summary", "column": "total_net_outflows_eur", "job": "JOB_MART_LCR", "last_updated": "2026-10-08", "confidence": 0.58, "recommended": true, "why": "Aggregates the SAS outflow engine; the per-deposit formula is opaque until the AI layer reads the DATA step." }
+      ],
+      "expected_story": "outflow_eur = balance × runoff_rate × stress_factor, computed in a SAS DATA step with a runtime scenario. The field trace stops at the SAS boundary until the AI layer recovers the formula."
+    }
+  ]
+}
